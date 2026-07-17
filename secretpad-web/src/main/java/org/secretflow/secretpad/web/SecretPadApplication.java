@@ -16,7 +16,7 @@
 
 package org.secretflow.secretpad.web;
 
-import org.secretflow.secretpad.web.configuration.ProtocolConfigurationProperties;
+import org.secretflow.secretpad.service.configuration.ProtocolConfigurationProperties;
 import org.secretflow.secretpad.web.constant.AuthConstants;
 
 import com.google.common.collect.Lists;
