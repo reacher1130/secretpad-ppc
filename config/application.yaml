@@ -55,6 +55,14 @@ spring:
       jdbc-url: jdbc:h2:./db/secretpadQuartz.mv.db;DB_CLOSE_ON_EXIT=FALSE
       username: sa
       password: password
+    # BFIA interconnect datasource (InterOp 管理层/控制层 持久化). Activates BfiaDataSourceConfig /
+    # BfiaJpaConfig / BfiaFlywayConfig only when this url is present. H2 in MySQL mode keeps the
+    # existing db/bfia/*.sql DDL (ON UPDATE CURRENT_TIMESTAMP, TINYINT...) portable for dev/allinone.
+    bfia:
+      driver-class-name: org.h2.Driver
+      url: ${BFIA_DB_URL:jdbc:h2:./db/secretpad_bfia;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL;DATABASE_TO_LOWER=TRUE}
+      username: ${BFIA_DB_USER:sa}
+      password: ${BFIA_DB_PASSWORD:password}
   #datasource used for mysql
   #spring:
   #  task:
@@ -103,6 +111,11 @@ flyway:
     encoding: UTF-8
     locations:
       - filesystem:./config/schema/quartz
+  bfia:
+    baseline-on-migrate: true
+    encoding: UTF-8
+    locations:
+      - filesystem:./config/schema/bfia
 
 
 springdoc:
@@ -134,6 +147,8 @@ kuscia:
       mode: master
       host: ${KUSCIA_API_ADDRESS:root-kuscia-master}
       port: ${KUSCIA_API_PORT:8083}
+      # BFIA interconn control-plane plain-HTTP port (job/create etc.)
+      http-port: ${KUSCIA_BFIA_HTTP_PORT:8084}
       protocol: ${KUSCIA_PROTOCOL:tls}
       cert-file: config/certs/client.crt
       key-file: config/certs/client.pem
@@ -143,6 +158,8 @@ kuscia:
       mode: lite
       host: ${KUSCIA_API_LITE_ALICE_ADDRESS:root-kuscia-lite-alice}
       port: ${KUSCIA_API_PORT:8083}
+      # BFIA interconn control-plane plain-HTTP port (job/create etc.)
+      http-port: ${KUSCIA_BFIA_HTTP_PORT:8084}
       protocol: ${KUSCIA_PROTOCOL:tls}
       cert-file: config/certs/alice/client.crt
       key-file: config/certs/alice/client.pem
@@ -152,6 +169,8 @@ kuscia:
       mode: lite
       host: ${KUSCIA_API_LITE_BOB_ADDRESS:root-kuscia-lite-bob}
       port: ${KUSCIA_API_PORT:8083}
+      # BFIA interconn control-plane plain-HTTP port (job/create etc.)
+      http-port: ${KUSCIA_BFIA_HTTP_PORT:8084}
       protocol: ${KUSCIA_PROTOCOL:tls}
       cert-file: config/certs/bob/client.crt
       key-file: config/certs/bob/client.pem
@@ -165,8 +184,8 @@ secretpad:
   logs:
     path: ${SECRETPAD_LOG_PATH:/app/log}
   deploy-mode: ${DEPLOY_MODE:ALL-IN-ONE} # MPC TEE ALL-IN-ONE
-  platform-type: CENTER
-  node-id: kuscia-system
+  platform-type: ${SECRETPAD_PLATFORM_TYPE:AUTONOMY}
+  node-id: ${NODE_ID:kuscia-system}
   center-platform-service: secretpad.master.svc
   gateway: ${KUSCIA_GW_ADDRESS:127.0.0.1:80}
   auth:
@@ -194,6 +213,10 @@ secretpad:
     capsule-manager-sim-image: ${CAPSULE_MANAGER_SIM_IMAGE:0.1.2b0}
     data-proxy-image: ${DATA_PROXY_IMAGE:0.1.0b0}
     scql-image: ${SCQL_IMAGE:0.1.0b0}
+
+  protocol:
+    default: ${SECRETPAD_PROTOCOL_DEFAULT:secretflow}
+    can-switch: ${SECRETPAD_PROTOCOL_CAN_SWITCH:true}
 
   component:
     hide:

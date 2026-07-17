@@ -16,6 +16,7 @@
 
 package org.secretflow.secretpad.web;
 
+import org.secretflow.secretpad.web.configuration.ProtocolConfigurationProperties;
 import org.secretflow.secretpad.web.constant.AuthConstants;
 
 import com.google.common.collect.Lists;
@@ -25,6 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
 import org.springframework.boot.web.servlet.server.ServletWebServerFactory;
 import org.springframework.cache.annotation.EnableCaching;
@@ -51,6 +53,7 @@ import java.nio.charset.StandardCharsets;
 @SpringBootApplication
 @EnableAsync
 @EnableCaching
+@EnableConfigurationProperties({ProtocolConfigurationProperties.class})
 public class SecretPadApplication {
 
     @Value("${server.http-port}")
