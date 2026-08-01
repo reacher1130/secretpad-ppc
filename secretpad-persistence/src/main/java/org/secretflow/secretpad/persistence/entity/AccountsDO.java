@@ -101,7 +101,7 @@ public class AccountsDO extends BaseAggregationRoot<AccountsDO> {
     /**
      * node instId
      */
-    @Column(name = "instId")
+    @Column(name = "inst_id")
     private String instId;
 
 }

@@ -55,6 +55,12 @@ public class InterfaceResourceAspect {
             // ignore check for edge platform
             return joinPoint.proceed();
         }
+        if (PlatformTypeEnum.AUTONOMY.equals(envService.getPlatformType())) {
+            // ignore check for autonomy platform — in AUTONOMY/P2P mode the admin user
+            // manages their own node and should have access to all APIs without explicit
+            // interface resource grants.
+            return joinPoint.proceed();
+        }
         if (UserOwnerTypeEnum.CENTER.equals(UserContext.getUser().getOwnerType())) {
             // ignore check for center user
             return joinPoint.proceed();

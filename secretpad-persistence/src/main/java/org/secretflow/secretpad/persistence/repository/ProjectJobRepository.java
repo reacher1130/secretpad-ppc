@@ -134,6 +134,16 @@ public interface ProjectJobRepository extends BaseRepository<ProjectJobDO, Proje
     List<ProjectJobDO> findByStatus(@Param("projectId") String projectId, @Param("graphId") String graphId, @Param("status") GraphJobStatus status);
 
     /**
+     * Query project job results by status only (across all projects and graphs).
+     * Used by the BFIA job status sync service to find running jobs for polling.
+     *
+     * @param status target status
+     * @return project job results
+     */
+    @Query("from ProjectJobDO pj where pj.status=:status")
+    List<ProjectJobDO> findByStatus(@Param("status") GraphJobStatus status);
+
+    /**
      * Query ProjectJobStatus list in project job table by projectId and jobIds
      *
      * @param projectId target projectId

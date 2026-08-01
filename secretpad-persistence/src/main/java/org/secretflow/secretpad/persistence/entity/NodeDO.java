@@ -84,10 +84,15 @@ public class NodeDO extends BaseAggregationRoot<NodeDO> {
     @Column(name = "protocol", length = 32)
     private String protocol;
 
+    @Column(name = "control_node_id", length = 64)
     private String controlNodeId;
+    @Column(name = "net_address", length = 100)
     private String netAddress;
+    @Column(name = "token", length = 100)
     private String token;
+    @Column(name = "type", length = 10)
     private String type;
+    @Column(name = "mode")
     private Integer mode;
 
     /**

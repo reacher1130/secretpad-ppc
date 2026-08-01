@@ -10,6 +10,8 @@ secretpad:
   platform-type: TEST
   auth:
     enabled: false
+    pad_name: admin
+    pad_pwd: admin123
   response:
     extra-headers:
       Content-Security-Policy: "base-uri 'self';frame-src 'self';worker-src blob: 'self' data:;object-src 'self';"

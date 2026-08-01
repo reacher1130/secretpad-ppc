@@ -78,3 +78,14 @@ docs/_build
 /config/ehcache-data/
 /db/secretpadQuartz.mv.db.mv.db
 /.cloudide/
+
+### Runtime data ###
+/db-test/
+/db_bfia/
+/db_secretflow/
+/db/*.mv.db
+/db/*.trace.db
+/logs/
+/data/
+/data_bfia/
+/data_secretflow/

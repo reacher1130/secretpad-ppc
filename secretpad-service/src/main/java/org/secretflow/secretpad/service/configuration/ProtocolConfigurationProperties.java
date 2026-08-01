@@ -18,13 +18,11 @@ package org.secretflow.secretpad.service.configuration;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * Protocol switching configuration for P2P edge nodes.
  */
 @Data
-@Component
 @ConfigurationProperties(prefix = "secretpad.protocol")
 public class ProtocolConfigurationProperties {
 

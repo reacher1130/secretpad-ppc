@@ -169,6 +169,8 @@ public class ProjectServiceImpl implements ProjectService {
     private ProjectGraphNodeRepository projectGraphNodeRepository;
     @Autowired
     private ProjectScheduleJobRepository projectScheduleJobRepository;
+    @Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<org.secretflow.secretpad.service.bfia.BfiaProjectService> bfiaProjectServiceProvider;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -208,7 +210,7 @@ public class ProjectServiceImpl implements ProjectService {
             projects = projectRepository.findAll();
         }
         // TODO: merge find.
-        return projects.stream().map(projectDO -> {
+        List<ProjectVO> result = projects.stream().map(projectDO -> {
             List<ProjectNodeProjection> pnps =
                     projectNodeRepository.findProjectionByProjectId(projectDO.getProjectId());
             Integer graphCount = projectGraphDORepository.countByProjectId(projectDO.getProjectId());
@@ -220,10 +222,70 @@ public class ProjectServiceImpl implements ProjectService {
                     .graphCount(graphCount).jobCount(jobCount).gmtCreate(DateTimes.toRfc3339(projectDO.getGmtCreate()))
                     .build();
         }).collect(Collectors.toList());
+
+        // Merge BFIA projects so the frontend project list page renders them alongside
+        // (or instead of) standard projects. The BFIA list is fetched via the optional
+        // BfiaProjectService bean which is only present when the BFIA datasource is configured.
+        org.secretflow.secretpad.service.bfia.BfiaProjectService bfiaService =
+                bfiaProjectServiceProvider != null ? bfiaProjectServiceProvider.getIfAvailable() : null;
+        if (bfiaService != null) {
+            try {
+                org.secretflow.secretpad.service.model.common.SecretPadPageResponse<org.secretflow.secretpad.service.model.bfia.BfiaProjectListInfo> bfiaPage =
+                        bfiaService.listProject(null, 1, 100);
+                if (bfiaPage != null && bfiaPage.getList() != null) {
+                    Set<String> existingIds = result.stream().map(ProjectVO::getProjectId).collect(Collectors.toSet());
+                    for (org.secretflow.secretpad.service.model.bfia.BfiaProjectListInfo info : bfiaPage.getList()) {
+                        if (existingIds.contains(info.getProjectId())) {
+                            continue;
+                        }
+                        List<ProjectNodeVO> nodes = info.getNodes() == null ? Collections.emptyList() :
+                                info.getNodes().stream().map(n -> ProjectNodeVO.builder()
+                                        .nodeId(n.getNodeId())
+                                        .nodeName(n.getNodeName())
+                                        .build()).collect(Collectors.toList());
+                        result.add(ProjectVO.builder()
+                                .projectId(info.getProjectId())
+                                .projectName(info.getName())
+                                .description(info.getDescription())
+                                .computeMode("MPC")
+                                .nodes(nodes)
+                                .gmtCreate(info.getGmtCreate() != null ? java.time.Instant.ofEpochSecond(info.getGmtCreate()).toString() : null)
+                                .build());
+                    }
+                }
+            } catch (Exception e) {
+                LOGGER.warn("Merge BFIA projects into listProject failed: {}", e.getMessage());
+            }
+        }
+        return result;
     }
 
     @Override
     public ProjectVO getProject(String projectId) {
+        try {
+            return getStandardProject(projectId);
+        } catch (Exception e) {
+            // BFIA fallback: the project may live in the BFIA datasource (bfia_project table)
+            // rather than the standard project table. The frontend's DefaultTableSelect calls
+            // /api/v1alpha1/project/get regardless of mode, so we must bridge here.
+            org.secretflow.secretpad.service.bfia.BfiaProjectService bfiaProjectService =
+                    bfiaProjectServiceProvider != null ? bfiaProjectServiceProvider.getIfAvailable() : null;
+            if (bfiaProjectService != null) {
+                try {
+                    org.secretflow.secretpad.service.model.bfia.BfiaProjectVO bfiaVo =
+                            bfiaProjectService.queryProject(null, projectId);
+                    if (bfiaVo != null) {
+                        return convertBfiaToProjectVO(bfiaVo);
+                    }
+                } catch (Exception bfiaEx) {
+                    LOGGER.warn("BFIA fallback for project {} also failed: {}", projectId, bfiaEx.getMessage());
+                }
+            }
+            throw e;
+        }
+    }
+
+    private ProjectVO getStandardProject(String projectId) {
         ProjectDO project = openProject(projectId);
         List<ProjectNodeProjection> pnps = projectNodeRepository.findProjectionByProjectId(project.getProjectId());
         // autonomy project nodes may be deleted when project is archived, need to query
@@ -245,6 +307,33 @@ public class ProjectServiceImpl implements ProjectService {
                 .nodes(pnps.stream()
                         .map(it -> ProjectNodeVO.from(it, nodeDtos.get(it.getProjectNodeDO().getUpk().getNodeId())))
                         .collect(Collectors.toList()))
+                .build();
+    }
+
+    /**
+     * Convert a BFIA project VO to the standard ProjectVO so the frontend
+     * (DefaultTableSelect etc.) can read nodes[].datatables[] transparently.
+     */
+    private ProjectVO convertBfiaToProjectVO(org.secretflow.secretpad.service.model.bfia.BfiaProjectVO bfiaVo) {
+        List<ProjectNodeVO> nodes = bfiaVo.getNodes() == null ? Collections.emptyList() :
+                bfiaVo.getNodes().stream().map(n -> {
+                    List<ProjectDatatableBaseVO> datatables = n.getDatatables() == null ? null :
+                            n.getDatatables().stream()
+                                    .map(dt -> new ProjectDatatableBaseVO(dt.getDatatableId(), dt.getDatatableName(), null))
+                                    .collect(Collectors.toList());
+                    return ProjectNodeVO.builder()
+                            .nodeId(n.getNodeId())
+                            .nodeName(n.getNodeName())
+                            .datatables(datatables)
+                            .build();
+                }).collect(Collectors.toList());
+        return ProjectVO.builder()
+                .projectId(bfiaVo.getProjectId())
+                .projectName(bfiaVo.getName())
+                .description(bfiaVo.getDescription())
+                .computeMode(bfiaVo.getComputeMode())
+                .teeNodeId("")
+                .nodes(nodes)
                 .build();
     }
 
@@ -626,7 +715,7 @@ public class ProjectServiceImpl implements ProjectService {
         List<VoteRequestDO> voteRequestDOS = voteRequestRepository.findAllById(projectIdVoteId.values());
         Map<String, Set<VoteRequestDO.PartyVoteInfo>> voteIdPartyInfoMap = voteRequestDOS.stream().collect(Collectors.toMap(VoteRequestDO::getVoteID, VoteRequestDO::getPartyVoteInfos));
         // TODO: merge find.
-        return projects.stream().map(projectDO -> {
+        List<ProjectVO> result = projects.stream().map(projectDO -> {
             String projectId = projectDO.getProjectId();
             List<ProjectNodeProjection> pnps =
                     projectNodeRepository.findProjectionByProjectId(projectId);
@@ -638,8 +727,13 @@ public class ProjectServiceImpl implements ProjectService {
                 throw SecretpadException.of(VoteErrorCode.PROJECT_VOTE_NOT_EXISTS, projectDO.getName());
             }
             Set<VoteRequestDO.PartyVoteInfo> partyVoteInfos = voteIdPartyInfoMap.get(projectIdVoteId.get(projectId));
-            Set<PartyVoteInfoVO> partyVoteInfoVOS = JsonUtils.toJavaSet(partyVoteInfos, PartyVoteInfoVO.class);
+            Set<PartyVoteInfoVO> partyVoteInfoVOS = partyVoteInfos == null ? new HashSet<>()
+                    : JsonUtils.toJavaSet(partyVoteInfos, PartyVoteInfoVO.class);
+            if (partyVoteInfoVOS == null) {
+                partyVoteInfoVOS = new HashSet<>();
+            }
             List<String> instIds = partyVoteInfoVOS.stream().map(PartyVoteInfoVO::getPartyId).collect(Collectors.toList());
+            instIds.add(projectDO.getOwnerId());
             Map<String, String> instMap = instRepository.findByInstIdIn(instIds).stream().collect(Collectors.toMap(InstDO::getInstId, InstDO::getName));
             partyVoteInfoVOS = partyVoteInfoVOS.stream().filter(e -> !StringUtils.equals(e.getPartyId(), projectDO.getOwnerId())).collect(Collectors.toSet());
             partyVoteInfoVOS.forEach(e -> e.setPartyName(instMap.get(e.getPartyId())));
@@ -657,6 +751,63 @@ public class ProjectServiceImpl implements ProjectService {
                     .voteId(projectIdVoteId.get(projectId))
                     .build();
         }).sorted(Comparator.comparing(ProjectVO::getGmtCreate).reversed()).collect(Collectors.toList());
+
+        // Merge BFIA projects into the P2P list so the frontend project list page
+        // renders BFIA projects created via the BFIA interoperability flow.
+        org.secretflow.secretpad.service.bfia.BfiaProjectService bfiaService =
+                bfiaProjectServiceProvider != null ? bfiaProjectServiceProvider.getIfAvailable() : null;
+        if (bfiaService != null) {
+            try {
+                org.secretflow.secretpad.service.model.common.SecretPadPageResponse<org.secretflow.secretpad.service.model.bfia.BfiaProjectListInfo> bfiaPage =
+                        bfiaService.listProject(null, 1, 100);
+                if (bfiaPage != null && bfiaPage.getList() != null) {
+                    Set<String> existingIds = result.stream().map(ProjectVO::getProjectId).collect(Collectors.toSet());
+                    for (org.secretflow.secretpad.service.model.bfia.BfiaProjectListInfo info : bfiaPage.getList()) {
+                        if (existingIds.contains(info.getProjectId())) {
+                            continue;
+                        }
+                        List<ProjectNodeVO> nodes = info.getNodes() == null ? Collections.emptyList() :
+                                info.getNodes().stream().map(n -> ProjectNodeVO.builder()
+                                        .nodeId(n.getNodeId())
+                                        .nodeName(n.getNodeName())
+                                        .build()).collect(Collectors.toList());
+                        // Build partyVoteInfos so the frontend "进入项目" button can read
+                        // partyVoteInfos[0].nodeName / .nodeId. The frontend also reads
+                        // project.name, project.initiatorNodeId, project.auditId.
+                        Set<PartyVoteInfoVO> partyVoteInfoVOS = new HashSet<>();
+                        if (info.getPartyVoteInfos() != null) {
+                            for (org.secretflow.secretpad.service.model.bfia.BfiaProjectListInfo.NodeInfo ni : info.getPartyVoteInfos()) {
+                                PartyVoteInfoVO vo = new PartyVoteInfoVO();
+                                vo.setPartyId(ni.getNodeId());
+                                vo.setPartyName(ni.getNodeName());
+                                vo.setNodeId(ni.getNodeId());
+                                vo.setNodeName(ni.getNodeName());
+                                vo.setAction("AGREE");
+                                partyVoteInfoVOS.add(vo);
+                            }
+                        }
+                        result.add(ProjectVO.builder()
+                                .projectId(info.getProjectId())
+                                .projectName(info.getName())
+                                .name(info.getName())
+                                .description(info.getDescription())
+                                .computeMode("MPC")
+                                .nodes(nodes)
+                                .status(info.getStatus() != null ? info.getStatus() : "APPROVED")
+                                .initiator(info.getInitiatorNodeId())
+                                .initiatorNodeId(info.getInitiatorNodeId())
+                                .initiatorName(info.getInitiatorName())
+                                .auditId(info.getAuditId())
+                                .partyVoteInfos(partyVoteInfoVOS)
+                                .gmtCreate(info.getGmtCreate() != null ? java.time.Instant.ofEpochSecond(info.getGmtCreate()).toString() : null)
+                                .build());
+                    }
+                }
+            } catch (Exception e) {
+                LOGGER.warn("Merge BFIA projects into listP2PProject failed: {}", e.getMessage());
+            }
+        }
+        return result;
     }
 
     @Transactional(rollbackFor = Exception.class)

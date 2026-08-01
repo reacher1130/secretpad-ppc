@@ -47,7 +47,12 @@ public enum GraphJobStatus {
     /**
      * Finished, failed
      */
-    FAILED("Failed");
+    FAILED("Failed"),
+
+    /**
+     * Waiting for the partner/center to approve the job before it can run.
+     */
+    AWAITING_APPROVAL("AwaitingApproval");
 
     private final String val;
 
@@ -65,6 +70,7 @@ public enum GraphJobStatus {
         return switch (status) {
             case "Succeeded" -> SUCCEED;
             case "Failed" -> FAILED;
+            case "AwaitingApproval" -> AWAITING_APPROVAL;
             default -> RUNNING;
         };
     }

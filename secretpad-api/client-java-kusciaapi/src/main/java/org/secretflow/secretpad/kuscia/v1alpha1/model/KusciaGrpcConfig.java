@@ -63,6 +63,13 @@ public class KusciaGrpcConfig implements Serializable {
     @Max(value = 65535, message = "port must be greater than 65535")
     private int port;
 
+    /**
+     * Kuscia BFIA interconn control-plane HTTP port (plain HTTP, default 8084).
+     * Used to submit BFIA jobs via /v1/interconn/schedule/job/create.
+     */
+    @Builder.Default
+    private int httpPort = 8084;
+
     @NotNull(message = "protocol cannot be null or empty")
     private KusciaProtocolEnum protocol;
 

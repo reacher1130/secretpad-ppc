@@ -335,7 +335,8 @@ public class InstServiceImpl implements InstService {
 
     @Override
     public boolean checkNodeInInst(String instId, String nodeId) {
-        return StringUtils.equals(nodeRepository.findByNodeId(nodeId).getInstId(), instId);
+        NodeDO node = nodeRepository.findByNodeId(nodeId);
+        return node != null && StringUtils.equals(node.getInstId(), instId);
     }
 
     @Override

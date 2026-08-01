@@ -50,8 +50,10 @@ public class LoginConfiguration implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(loginInterceptor)
                 .addPathPatterns("/api/v1alpha1/**")
+                .addPathPatterns("/api/v1bfia/**")
                 .addPathPatterns("/sync")
                 .addPathPatterns("/api/logout")
-                .excludePathPatterns("/api/v1alpha1/inst/node/register");
+                .excludePathPatterns("/api/v1alpha1/inst/node/register")
+                .excludePathPatterns("/api/v1alpha1/user/login");
     }
 }

@@ -124,6 +124,17 @@ public interface GraphService {
     StartGraphVO startGraph(StartGraphRequest request);
 
     /**
+     * Build a project job (load graph, resolve parties) WITHOUT submitting it to kuscia.
+     * Caller is responsible for submission and for clearing {@code GraphContext} afterwards.
+     * Reused by the BFIA flow path which submits via the kuscia interconn HTTP API instead
+     * of the standard gRPC job chain.
+     *
+     * @param request start graph request
+     * @return the assembled project job
+     */
+    org.secretflow.secretpad.service.model.graph.ProjectJob buildProjectJob(StartGraphRequest request);
+
+    /**
      * List graph node status by list graph node status request
      *
      * @param request list graph node status request

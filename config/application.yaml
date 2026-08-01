@@ -49,10 +49,10 @@ spring:
   datasource:
     default:
       driver-class-name: org.sqlite.JDBC
-      jdbc-url: jdbc:sqlite:./db/secretpad.sqlite
+      jdbc-url: jdbc:sqlite:${DB_PATH:./db}/secretpad.sqlite
     quartz:
       driver-class-name: org.h2.Driver
-      jdbc-url: jdbc:h2:./db/secretpadQuartz.mv.db;DB_CLOSE_ON_EXIT=FALSE
+      jdbc-url: jdbc:h2:${DB_PATH:./db}/secretpadQuartz.mv.db;DB_CLOSE_ON_EXIT=FALSE
       username: sa
       password: password
     # BFIA interconnect datasource (InterOp 管理层/控制层 持久化). Activates BfiaDataSourceConfig /
@@ -60,7 +60,7 @@ spring:
     # existing db/bfia/*.sql DDL (ON UPDATE CURRENT_TIMESTAMP, TINYINT...) portable for dev/allinone.
     bfia:
       driver-class-name: org.h2.Driver
-      url: ${BFIA_DB_URL:jdbc:h2:./db/secretpad_bfia;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL;DATABASE_TO_LOWER=TRUE}
+      url: ${BFIA_DB_URL:jdbc:h2:${DB_PATH:./db}/secretpad_bfia;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL;DATABASE_TO_LOWER=TRUE}
       username: ${BFIA_DB_USER:sa}
       password: ${BFIA_DB_PASSWORD:password}
   #datasource used for mysql
@@ -141,6 +141,12 @@ management:
 kusciaapi:
   protocol: ${KUSCIA_PROTOCOL:tls}
 
+---
+spring:
+  config:
+    activate:
+      on-profile: "!p2p"
+
 kuscia:
   nodes:
     - domainId: ${NODE_ID:kuscia-system}
@@ -205,7 +211,7 @@ secretpad:
     p2p: false
   version:
     secretpad-image: ${SECRETPAD_IMAGE:0.5.0b0}
-    kuscia-image: ${KUSCIA_IMAGE:0.6.0b0}
+    kuscia-image: ${KUSCIA_IMAGE:1.2.0b0}
     secretflow-image: ${SECRETFLOW_IMAGE:1.4.0b0}
     secretflow-serving-image: ${SECRETFLOW_SERVING_IMAGE:0.2.0b0}
     tee-app-image: ${TEE_APP_IMAGE:0.1.0b0}
@@ -215,7 +221,7 @@ secretpad:
     scql-image: ${SCQL_IMAGE:0.1.0b0}
 
   protocol:
-    default: ${SECRETPAD_PROTOCOL_DEFAULT:secretflow}
+    default-protocol: ${SECRETPAD_PROTOCOL_DEFAULT:secretflow}
     can-switch: ${SECRETPAD_PROTOCOL_CAN_SWITCH:true}
 
   component:

@@ -18,12 +18,49 @@ secretpad:
   certs:
     dir-path: /app/config/certs/
 
+  logs:
+    path: ${SECRETPAD_LOGS_PATH:/app/log}
+  gateway: ${KUSCIA_GW_ADDRESS:127.0.0.1:80}
+  response:
+    extra-headers:
+      Content-Security-Policy: "base-uri 'self';frame-src 'self';worker-src blob: 'self' data:;object-src 'self';"
+  upload-file:
+    max-file-size: -1    # -1 means not limit, e.g.  200MB, 1GB
+    max-request-size: -1 # -1 means not limit, e.g.  200MB, 1GB
   datasync:
     center: false
     p2p: true
     # fastFailedPolicy :   Throw an exception, log it, and don't try again
     # retryPolicy      :   Keep trying until you succeed
     retry: fastFailedPolicy
+  version:
+    secretpad-image: ${SECRETPAD_IMAGE:0.5.0b0}
+    kuscia-image: ${KUSCIA_IMAGE:1.2.0b0}
+    secretflow-image: ${SECRETFLOW_IMAGE:1.4.0b0}
+    secretflow-serving-image: ${SECRETFLOW_SERVING_IMAGE:0.2.0b0}
+    tee-app-image: ${TEE_APP_IMAGE:0.1.0b0}
+    tee-dm-image: ${TEE_DM_IMAGE:0.1.0b0}
+    capsule-manager-sim-image: ${CAPSULE_MANAGER_SIM_IMAGE:0.1.2b0}
+    data-proxy-image: ${DATA_PROXY_IMAGE:0.1.0b0}
+    scql-image: ${SCQL_IMAGE:0.1.0b0}
+  protocol:
+    default-protocol: ${SECRETPAD_PROTOCOL_DEFAULT:secretflow}
+    can-switch: ${SECRETPAD_PROTOCOL_CAN_SWITCH:true}
+  component:
+    hide:
+      - secretflow/io/read_data:1.0.0
+      - secretflow/io/write_data:1.0.0
+      - secretflow/io/identity:1.0.0
+      - secretflow/io/data_sink:1.0.0
+      - secretflow/io/data_source:1.0.0
+      - secretflow/model/model_export:1.0.0
+      - secretflow/ml.train/slnn_train:0.0.1
+      - secretflow/ml.predict/slnn_predict:0.0.2
+  data-proxy:
+    enabled: ${DATAPROXY_ENABLE:true}
+  scql:
+    enabled: ${SCQL_ENABLE:true}
+    component: secretflow/stats/scql_analysis:1.0.0
 
 kuscia:
   nodes:
@@ -32,9 +69,26 @@ kuscia:
       host: ${KUSCIA_API_ADDRESS:root-kuscia-autonomy}
       port: ${KUSCIA_API_PORT:8083}
       protocol: ${KUSCIA_PROTOCOL:tls}
-      cert-file: config/certs/client.crt
-      key-file: config/certs/client.pem
+      cert-file: file:./config/certs/client.crt
+      key-file: file:./config/certs/client.pem
       token: config/certs/token
+    # Kimi Kuscia node registered in Alice's SecretPad so cross-node SecretFlow
+    # jobs can query Kimi's domain data directly instead of relying on grants.
+    - domainId: kimi
+      mode: p2p
+      host: 127.0.0.1
+      port: 38083
+      protocol: tls
+      cert-file: file:./config/certs/kimi/client.crt
+      key-file: file:./config/certs/kimi/client.pem
+      token: config/certs/kimi/token
+
+sfcluster-desc:
+  device-config:
+    spu: '{"runtime_config":{"protocol":"SEMI2K","field":"FM128"},"link_desc":{"connect_retry_times":60,"connect_retry_interval_ms":1000,"brpc_channel_protocol":"http","brpc_channel_connection_type":"pooled","recv_timeout_ms":1200000,"http_timeout_ms":1200000}}'
+    heu: '{"mode": "PHEU", "schema": "paillier", "key_size": 2048}'
+  ray-fed-config:
+    cross-silo-comm-backend: "brpc_link"
 
 data:
   sync:

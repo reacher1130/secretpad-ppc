@@ -193,6 +193,23 @@ public class ProjectGraphDomainDatasourceServiceImpl implements ProjectGraphDoma
         }
         List<ProjectNodeDO> projectNodeDOList = projectNodeRepository.findByProjectId(projectId);
         if (CollectionUtils.isEmpty(projectNodeDOList) && !isArchived) {
+            // BFIA fallback: BFIA 项目记录在 bfia_project 表，project_node 可能尚未写入。
+            // 从已注册的 lite/autonomy 节点补写 project_node，使 fullUpdateGraph 等标准流程可用。
+            List<NodeDO> registeredNodes = nodeRepository.findByModeIn(List.of(1));
+            if (!CollectionUtils.isEmpty(registeredNodes)) {
+                log.info("BFIA fallback: creating project_node for projectId={} from {} registered nodes", projectId, registeredNodes.size());
+                for (NodeDO node : registeredNodes) {
+                    if (node.getNodeId() != null) {
+                        ProjectNodeDO.UPK upk = new ProjectNodeDO.UPK(projectId, node.getNodeId());
+                        if (!projectNodeRepository.findById(upk).isPresent()) {
+                            projectNodeRepository.save(ProjectNodeDO.Factory.newProjectNode(projectId, node.getNodeId()));
+                        }
+                    }
+                }
+                projectNodeDOList = projectNodeRepository.findByProjectId(projectId);
+            }
+        }
+        if (CollectionUtils.isEmpty(projectNodeDOList) && !isArchived) {
             throw SecretpadException.of(SystemErrorCode.VALIDATION_ERROR, "can't find any nodes in project:" + projectId);
         }
         if (!isArchived) {

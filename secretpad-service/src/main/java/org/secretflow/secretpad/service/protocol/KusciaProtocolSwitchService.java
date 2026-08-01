@@ -33,7 +33,7 @@ public class KusciaProtocolSwitchService {
 
     private final ProtocolConfigurationProperties properties;
 
-    @Value("${secretpad.kuscia.switch-script:./scripts/switch_alice_protocol.sh}")
+    @Value("${secretpad.kuscia.switch-script:../scripts/switch_alice_protocol.sh}")
     private String switchScript;
 
     public void restartKuscia(String protocol) {

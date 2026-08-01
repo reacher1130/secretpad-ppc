@@ -83,7 +83,7 @@ public interface NodeRepository extends BaseRepository<NodeDO, String> {
      * @return node results
      */
     @Query("from NodeDO nd where nd.instId=:instId")
-    List<NodeDO> findByInstId(String instId);
+    List<NodeDO> findByInstId(@Param("instId") String instId);
 
     @Query("select count(*) from NodeDO nd where nd.instId=:instId")
     Integer countByInstId(@Param("instId") String instId);

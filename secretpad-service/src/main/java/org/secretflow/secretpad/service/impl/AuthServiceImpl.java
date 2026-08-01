@@ -94,6 +94,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional(rollbackFor = Exception.class, noRollbackFor = SecretpadException.class)
     public UserContextDTO login(String name, String passwordHash) {
+        System.out.println("DEBUG login name=" + name + ", passwordHash=" + passwordHash);
         //check password and lock
         AccountsDO user = accountLockedCheck(name, passwordHash);
         String token = UUIDUtils.newUUID();
@@ -149,6 +150,7 @@ public class AuthServiceImpl implements AuthService {
         LocalDateTime currentTime = LocalDateTime.now();
         //current user is need lock
         AccountsDO user = userService.queryUserByName(userName);
+        System.out.println("DEBUG accountLockedCheck userName=" + userName + ", passwordHash=" + passwordHash + ", dbPasswordHash=" + (ObjectUtils.isEmpty(user) ? "null" : user.getPasswordHash()));
         if (ObjectUtils.isEmpty(user)) {
             Cache cache = cacheManager.getCache(CacheConstants.USER_LOCK_CACHE);
             HashMap<String, Integer> lockInfo = cache.get(userName, HashMap.class);

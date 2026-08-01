@@ -141,7 +141,13 @@ public class JobRenderHandler extends AbstractJobHandler<ProjectJob> {
                                 // domain data grant query , in p2p should be one of project node in local inst
                                 String localNodeId = envService.findLocalNodeId(task);
                                 String nodeId = projectDatatableDO.getUpk().getNodeId();
-                                nodeId = StringUtils.isBlank(localNodeId) ? nodeId : localNodeId;
+                                // For cross-node datatables (e.g. Kimi's data referenced in Alice's project),
+                                // keep the owner nodeId so that the query is routed to that node's Kuscia,
+                                // which is configured directly in application-p2p.yaml. Only rewrite to a
+                                // local node when the datatable is owned by the local platform node.
+                                if (StringUtils.isNotBlank(localNodeId) && StringUtils.equals(nodeId, envService.getPlatformNodeId())) {
+                                    nodeId = localNodeId;
+                                }
                                 log.warn("[JobRenderHandler] find datatable, nodeId:{}, datatableId:{}", nodeId, datatableId);
                                 datatableDTOOptional = datatableManager.findById(DatatableDTO.NodeDatatableId.from(nodeId, datatableId));
                                 if (datatableDTOOptional.isEmpty()) {

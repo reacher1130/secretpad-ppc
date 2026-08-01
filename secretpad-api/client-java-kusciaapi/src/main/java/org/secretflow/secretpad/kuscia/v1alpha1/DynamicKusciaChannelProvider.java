@@ -47,6 +47,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -98,7 +99,7 @@ public class DynamicKusciaChannelProvider {
     public void init() {
         isInitialized = true;
         if (!CollectionUtils.isEmpty(dynamicKusciaGrpcConfig.getNodes())) {
-            for (KusciaGrpcConfig config : dynamicKusciaGrpcConfig.getNodes()) {
+            for (KusciaGrpcConfig config : new ArrayList<>(dynamicKusciaGrpcConfig.getNodes())) {
                 log.info("Init kuscia node, config={}", config);
                 registerKuscia(config);
                 log.info("Init kuscia node success, CHANNEL_FACTORIES={}", CHANNEL_FACTORIES);

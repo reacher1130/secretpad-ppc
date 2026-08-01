@@ -1,0 +1,21 @@
+{
+  "components": [
+    {
+      "id": "bfia-read-csv",
+      "name": "Read CSV",
+      "category": "io",
+      "params": [
+        {"name": "path", "type": "string", "required": true}
+      ]
+    },
+    {
+      "id": "bfia-sql-filter",
+      "name": "SQL Filter",
+      "category": "transform",
+      "params": [
+        {"name": "expr", "type": "string", "required": true}
+      ]
+    }
+  ]
+}
+

@@ -30,4 +30,8 @@ public class PartyVoteInfoVO {
     private String partyName;
     private String action;
     private String reason;
+    /** BFIA alias for partyId — the frontend reads nodeId from partyVoteInfos[0] */
+    private String nodeId;
+    /** BFIA alias for partyName — the frontend reads nodeName from partyVoteInfos[0] */
+    private String nodeName;
 }

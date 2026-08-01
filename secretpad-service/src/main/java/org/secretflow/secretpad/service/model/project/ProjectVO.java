@@ -109,9 +109,14 @@ public class ProjectVO {
      */
     private String computeFunc;
 
-    /**
-     * project vote id
-     */
+    /** project vote id */
     private String voteId;
+
+    /** BFIA: project name alias — frontend reads project.name */
+    private String name;
+    /** BFIA: initiator node id alias — frontend reads project.initiatorNodeId */
+    private String initiatorNodeId;
+    /** BFIA: audit id — frontend reads project.auditId for the project-detail URL */
+    private String auditId;
 
 }

@@ -26,6 +26,7 @@ import org.secretflow.secretpad.common.exception.SecretpadException;
 import org.secretflow.secretpad.common.util.UserContext;
 import org.secretflow.secretpad.persistence.entity.ProjectNodeDO;
 import org.secretflow.secretpad.persistence.entity.TokensDO;
+import org.secretflow.secretpad.persistence.repository.NodeRepository;
 import org.secretflow.secretpad.persistence.repository.ProjectNodeRepository;
 import org.secretflow.secretpad.persistence.repository.UserTokensRepository;
 import org.secretflow.secretpad.service.EnvService;
@@ -76,6 +77,9 @@ public class LoginInterceptor implements HandlerInterceptor {
 
     private final SysResourcesBizService sysResourcesBizService;
 
+    @Resource
+    private NodeRepository nodeRepository;
+
     @Value("${secretpad.auth.enabled:true}")
     private boolean enable;
 
@@ -109,15 +113,36 @@ public class LoginInterceptor implements HandlerInterceptor {
             userContextDTO.setDeployMode(deployMode);
             return userContextDTO;
         } else if (PlatformTypeEnum.TEST.equals(envService.getPlatformType())) {
-            return UserContext.getUser();
+            UserContextDTO userContextDTO = new UserContextDTO();
+            userContextDTO.setName("admin");
+            userContextDTO.setOwnerId(envService.getPlatformNodeId());
+            userContextDTO.setOwnerType(UserOwnerTypeEnum.CENTER);
+            userContextDTO.setToken("token");
+            userContextDTO.setPlatformType(platformType);
+            userContextDTO.setPlatformNodeId(envService.getPlatformNodeId());
+            userContextDTO.setDeployMode(deployMode);
+            return userContextDTO;
         }
         UserContextDTO userContextDTO = new UserContextDTO();
         userContextDTO.setName("admin");
-        userContextDTO.setOwnerId("nodeId");
-        userContextDTO.setOwnerType(UserOwnerTypeEnum.EDGE);
+        // In AUTONOMY/P2P mode, fall back to the local node's institution id so that
+        // disabled-auth requests can still operate on P2P projects and resources.
+        String localNodeId = envService.getPlatformNodeId();
+        String instId = localNodeId;
+        if (nodeRepository != null) {
+            try {
+                org.secretflow.secretpad.persistence.entity.NodeDO node = nodeRepository.findByNodeId(localNodeId);
+                if (node != null && org.apache.commons.lang3.StringUtils.isNotBlank(node.getInstId())) {
+                    instId = node.getInstId();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        userContextDTO.setOwnerId(instId);
+        userContextDTO.setOwnerType(UserOwnerTypeEnum.P2P);
         userContextDTO.setToken("token");
         userContextDTO.setPlatformType(platformType);
-        userContextDTO.setPlatformNodeId(envService.getPlatformNodeId());
+        userContextDTO.setPlatformNodeId(localNodeId);
         userContextDTO.setDeployMode(deployMode);
         return userContextDTO;
     }

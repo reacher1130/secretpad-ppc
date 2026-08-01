@@ -19,8 +19,12 @@ import org.secretflow.secretpad.common.enums.ProjectStatusEnum;
 import org.secretflow.secretpad.common.util.UserContext;
 import org.secretflow.secretpad.persistence.entity.ProjectDO;
 import org.secretflow.secretpad.service.ProjectService;
+import org.secretflow.secretpad.service.bfia.BfiaProjectService;
+import org.secretflow.secretpad.service.model.bfia.BfiaProjectVO;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,18 +33,41 @@ import org.springframework.stereotype.Component;
  * @author yeuxie
  * @date 2023-10-20
  */
+@Slf4j
 @Component
 public class DataResourceProjectAuth {
 
     @Autowired
     private ProjectService projectService;
 
+    @Autowired(required = false)
+    private ObjectProvider<BfiaProjectService> bfiaProjectServiceProvider;
+
     public boolean check(String resourceId) {
         boolean exist = projectService.checkOwnerInProject(resourceId, UserContext.getUser().getOwnerId());
         if (!exist) {
-            ProjectDO project = projectService.openProject(resourceId);
-            if (ProjectStatusEnum.ARCHIVED.getCode().equals(project.getStatus())) {
-                return projectService.checkNodeArchive(resourceId);
+            try {
+                ProjectDO project = projectService.openProject(resourceId);
+                if (ProjectStatusEnum.ARCHIVED.getCode().equals(project.getStatus())) {
+                    return projectService.checkNodeArchive(resourceId);
+                }
+            } catch (Exception e) {
+                // BFIA fallback: the project may live in the BFIA datasource. If a BFIA
+                // project with this id exists, treat the resource check as passed so the
+                // frontend's /api/v1alpha1/project/get handler can run the BFIA fallback
+                // in ProjectServiceImpl.getProject().
+                BfiaProjectService bfiaService = bfiaProjectServiceProvider != null ? bfiaProjectServiceProvider.getIfAvailable() : null;
+                if (bfiaService != null) {
+                    try {
+                        BfiaProjectVO bfiaVo = bfiaService.queryProject(null, resourceId);
+                        if (bfiaVo != null) {
+                            return true;
+                        }
+                    } catch (Exception bfiaEx) {
+                        log.warn("BFIA fallback in DataResourceProjectAuth for {} failed: {}", resourceId, bfiaEx.getMessage());
+                    }
+                }
+                throw e;
             }
         }
         return exist;

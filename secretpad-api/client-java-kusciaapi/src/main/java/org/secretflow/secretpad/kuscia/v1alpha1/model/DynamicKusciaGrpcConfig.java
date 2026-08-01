@@ -21,7 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.List;
 
 /**
  * @author yutu
@@ -32,5 +32,5 @@ import java.util.concurrent.CopyOnWriteArraySet;
 @Configuration
 @ConfigurationProperties(prefix = "kuscia")
 public class DynamicKusciaGrpcConfig {
-    private CopyOnWriteArraySet<KusciaGrpcConfig> nodes;
+    private List<KusciaGrpcConfig> nodes;
 }

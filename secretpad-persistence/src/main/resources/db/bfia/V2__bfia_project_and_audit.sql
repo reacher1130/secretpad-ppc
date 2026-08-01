@@ -1,0 +1,29 @@
+CREATE TABLE IF NOT EXISTS bfia_project (
+  project_id VARCHAR(64) PRIMARY KEY,
+  contract_id VARCHAR(64) NOT NULL,
+  name VARCHAR(256) NOT NULL,
+  type VARCHAR(64) NOT NULL,
+  datasets TEXT NOT NULL,
+  description TEXT,
+  is_deleted TINYINT DEFAULT 0,
+  gmt_create TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  gmt_modified TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS bfia_audit (
+  audit_id VARCHAR(64) PRIMARY KEY,
+  contract_id VARCHAR(64) NOT NULL,
+  apply_node_id VARCHAR(64) NOT NULL,
+  type VARCHAR(64) NOT NULL,
+  dataset_id VARCHAR(64),
+  project_id VARCHAR(64),
+  flow_id VARCHAR(64),
+  status VARCHAR(64) NOT NULL,
+  auth_scope TEXT,
+  time_limit BIGINT,
+  description TEXT,
+  is_deleted TINYINT DEFAULT 0,
+  gmt_create TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  gmt_modified TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+

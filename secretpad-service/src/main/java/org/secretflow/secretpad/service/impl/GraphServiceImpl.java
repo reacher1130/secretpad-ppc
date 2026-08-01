@@ -671,6 +671,16 @@ public class GraphServiceImpl implements GraphService {
     @Transactional
     @Override
     public StartGraphVO startGraph(StartGraphRequest request) {
+        ProjectJob projectJob = buildProjectJob(request);
+        jobChain.proceed(projectJob);
+        if (!GraphContext.isScheduled()) {
+            GraphContext.remove();
+        }
+        return new StartGraphVO(projectJob.getJobId());
+    }
+
+    @Override
+    public ProjectJob buildProjectJob(StartGraphRequest request) {
         // check project graph owner
         ProjectGraphDO graphDO = ownerCheck(request.getProjectId(), request.getGraphId());
         List<ProjectGraphNodeDO> nodeDOList = graphDO.getNodes();
@@ -701,12 +711,7 @@ public class GraphServiceImpl implements GraphService {
         }
 
         verifyNodeAndRouteHealthy(parties.values().stream().flatMap(Set::stream).collect(Collectors.toSet()), request.getProjectId());
-        ProjectJob projectJob = ProjectJob.genProjectJob(graphDO, selectedNodes, parties);
-        jobChain.proceed(projectJob);
-        if (!GraphContext.isScheduled()) {
-            GraphContext.remove();
-        }
-        return new StartGraphVO(projectJob.getJobId());
+        return ProjectJob.genProjectJob(graphDO, selectedNodes, parties);
     }
 
     /**
@@ -846,6 +851,12 @@ public class GraphServiceImpl implements GraphService {
 
     public void verifyNodeAndRouteHealthy(Set<String> parties, String projectId) {
         log.info("before graph run healthy check: {}", parties);
+        if (CollectionUtils.isEmpty(parties)) {
+            // No parties resolved (e.g. BFIA flows whose parties are resolved later by
+            // BfiaFlowServiceImpl.ensureParties). Nothing to verify — skip the P2P route
+            // and project-approval-config checks that only apply to resolved parties.
+            return;
+        }
         if (PlatformTypeEnum.AUTONOMY.equals(PlatformTypeEnum.valueOf(plaformType))) {
             // unilateral mission
             if (parties.size() == 1) {

@@ -21,14 +21,26 @@ import org.secretflow.secretpad.common.dto.SyncDataDTO;
 import org.secretflow.secretpad.persistence.datasync.listener.EntityChangeListener;
 import org.secretflow.secretpad.persistence.datasync.rest.DataSyncRestTemplate;
 import org.secretflow.secretpad.persistence.entity.BaseAggregationRoot;
+import org.secretflow.secretpad.persistence.entity.NodeDO;
+import org.secretflow.secretpad.persistence.repository.NodeRepository;
 
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
+import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.ObjectUtils;
+import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,6 +55,14 @@ public class P2pDataSyncRestTemplate extends DataSyncRestTemplate {
 
     Map<EntityChangeListener.DbChangeEvent<BaseAggregationRoot>, AtomicInteger> retryTimes = new ConcurrentHashMap<>();
     static final int MAX_RETRY_TIMES = 3;
+
+    @Resource
+    private NodeRepository nodeRepository;
+
+    @Value("${secretpad.node-id}")
+    private String localNodeId;
+
+    private final RestTemplate restTemplate = new RestTemplate();
 
     @Override
     public EntityChangeListener.DbChangeEvent<BaseAggregationRoot> send(String node) throws InterruptedException {
@@ -60,20 +80,26 @@ public class P2pDataSyncRestTemplate extends DataSyncRestTemplate {
                         .action(event.getAction())
                         .data(event.getSource()).build();
                 try {
-                    routeId = p2pPaddingNodeService.turnInstToRouteId(node);
+                    routeId = resolveRouteId(node);
                     log.info("P2pDataSyncRestTemplate send, routeId:{} instId:{}", routeId, node);
-                    syncResp = p2pDataSyncRestService.sync(node, "secretpad." + routeId + ".svc", syncDataDTO.toJson());
-                    if (0 == syncResp.getStatus().getCode()) {
+                    String peerPadUrl = resolvePeerPadAddress(routeId) + "/api/v1alpha1/data/sync";
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.setContentType(MediaType.APPLICATION_JSON);
+                    headers.set("kuscia-origin-source", localNodeId);
+                    HttpEntity<String> entity = new HttpEntity<>(syncDataDTO.toJson(), headers);
+                    ResponseEntity<SecretPadResponse> response = restTemplate.postForEntity(peerPadUrl, entity, SecretPadResponse.class);
+                    syncResp = response.getBody();
+                    if (syncResp != null && syncResp.getStatus() != null && 0 == syncResp.getStatus().getCode()) {
                         onSuccess(node, event);
                         long duration = System.currentTimeMillis() - startTime;
                         recordMetrics(routeId, syncDataDTO.getTableName(), duration, "success", size);
                     } else {
-                        log.error("P2pDataSyncRestTemplate send error,{} {}"
-                                , syncResp.getStatus().getCode()
-                                , syncResp.getStatus().getMsg());
+                        String code = syncResp == null || syncResp.getStatus() == null ? "null" : String.valueOf(syncResp.getStatus().getCode());
+                        String msg = syncResp == null || syncResp.getStatus() == null ? "null" : syncResp.getStatus().getMsg();
+                        log.error("P2pDataSyncRestTemplate send error,{} {}", code, msg);
                         onError(node, event);
                         long duration = System.currentTimeMillis() - startTime;
-                        recordMetrics(routeId, syncDataDTO.getTableName(), duration, syncResp.getStatus().getMsg(), size);
+                        recordMetrics(routeId, syncDataDTO.getTableName(), duration, msg, size);
                     }
                 } catch (Exception e) {
                     log.error("P2pDataSyncRestTemplate send error", e);
@@ -89,6 +115,34 @@ public class P2pDataSyncRestTemplate extends DataSyncRestTemplate {
             }
         }
         return event;
+    }
+
+    private String resolveRouteId(String instId) {
+        String routeId = p2pPaddingNodeService.turnInstToRouteId(instId);
+        if (StringUtils.hasText(routeId)) {
+            return routeId;
+        }
+        List<NodeDO> nodes = nodeRepository.findByInstId(instId);
+        if (!CollectionUtils.isEmpty(nodes)) {
+            for (NodeDO node : nodes) {
+                if (StringUtils.hasText(node.getNodeId())) {
+                    return node.getNodeId();
+                }
+            }
+        }
+        throw new IllegalStateException("Cannot resolve routeId for instId: " + instId);
+    }
+
+    private String resolvePeerPadAddress(String routeId) {
+        String envKey = "SECRETPAD_PEER_" + routeId.toUpperCase() + "_HTTP_ADDRESS";
+        String addr = System.getenv(envKey);
+        if (!StringUtils.hasText(addr)) {
+            throw new IllegalStateException("Peer SecretPad HTTP address not configured, env: " + envKey);
+        }
+        if (!addr.startsWith("http://") && !addr.startsWith("https://")) {
+            addr = "http://" + addr;
+        }
+        return StringUtils.trimTrailingCharacter(addr, '/');
     }
 
     @Override

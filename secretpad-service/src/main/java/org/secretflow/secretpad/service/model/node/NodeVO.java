@@ -166,6 +166,18 @@ public class NodeVO {
     @Schema(description = "instToken")
     private String instToken;
 
+    /**
+     * BFIA connectivity: display name (alias of nodeName for frontend compatibility)
+     */
+    @Schema(description = "name (BFIA frontend)")
+    private String name;
+
+    /**
+     * BFIA connectivity: contract id (uses nodeId as contract id in single-node mode)
+     */
+    @Schema(description = "contractId (BFIA frontend)")
+    private String contractId;
+
     //now for p2p
     @Schema(description = "this node allow or not  to be deleted")
     private Boolean allowDeletion = false;
