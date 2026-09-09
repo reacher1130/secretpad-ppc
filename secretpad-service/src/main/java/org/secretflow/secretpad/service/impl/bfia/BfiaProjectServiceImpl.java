@@ -90,7 +90,14 @@ public class BfiaProjectServiceImpl implements BfiaProjectService {
         if (audit == null) {
             throw SecretpadException.of(SystemErrorCode.VALIDATION_ERROR, "审批不存在");
         }
-        audit.setStatus(StringUtils.defaultIfBlank(request.getStatus(), "APPROVED"));
+        if (!java.util.Set.of("APPROVED", "REJECTED").contains(StringUtils.defaultString(request.getStatus()))) {
+            throw SecretpadException.of(SystemErrorCode.VALIDATION_ERROR, "无效的项目审批状态");
+        }
+        if (StringUtils.equals(nodeId, audit.getApplyNodeId())
+                || !projectNodeRepository.findProjectNodesByProjectId(audit.getProjectId()).contains(nodeId)) {
+            throw SecretpadException.of(SystemErrorCode.VALIDATION_ERROR, "只有受邀参与方可以审批项目");
+        }
+        audit.setStatus(request.getStatus());
         auditRepository.save(audit);
         return true;
     }
@@ -116,12 +123,6 @@ public class BfiaProjectServiceImpl implements BfiaProjectService {
         } else {
             page = projectRepository.findAllByContractId(contractId, pageable);
         }
-        // Build the participating node list once for all projects on this node.
-        List<NodeDO> allNodes = nodeRepository.findAll();
-        List<BfiaProjectListInfo.NodeInfo> nodeInfos = new ArrayList<>();
-        for (NodeDO n : allNodes) {
-            nodeInfos.add(new BfiaProjectListInfo.NodeInfo(n.getNodeId(), n.getName()));
-        }
         return SecretPadPageResponse.toPage(
                 page.map(p -> {
                     BfiaProjectListInfo info = new BfiaProjectListInfo();
@@ -132,33 +133,20 @@ public class BfiaProjectServiceImpl implements BfiaProjectService {
                     if (p.getGmtCreate() != null) {
                         info.setGmtCreate(p.getGmtCreate().atZone(ZoneOffset.systemDefault()).toEpochSecond());
                     }
-                    // For the BFIA console, a project that has been persisted is considered approved
-                    // so the frontend renders the participating-nodes / pipeline / task summary
-                    // rather than the pending-approval tag.
-                    info.setStatus("APPROVED");
-                    // The current node is the initiator (P2P mode: each node creates its own view).
-                    String initiatorId = p.getContractId() != null ? p.getContractId() : "";
-                    info.setInitiatorNodeId(initiatorId);
-                    for (NodeDO n : allNodes) {
-                        if (n.getNodeId() != null && n.getNodeId().equals(initiatorId)) {
-                            info.setInitiatorName(n.getName());
-                            break;
-                        }
-                    }
-                    if (info.getInitiatorName() == null && !allNodes.isEmpty()) {
-                        info.setInitiatorNodeId(allNodes.get(0).getNodeId());
-                        info.setInitiatorName(allNodes.get(0).getName());
-                    }
-                    // Look up the audit record for this project so the frontend "进入项目"
-                    // button has an auditId to pass through in the project-detail URL.
                     List<BfiaAuditDO> audits = auditRepository.findByProjectId(p.getProjectId());
+                    info.setStatus("UNAPPROVED");
                     if (!audits.isEmpty()) {
-                        info.setAuditId(audits.get(0).getAuditId());
+                        BfiaAuditDO audit = audits.get(0);
+                        info.setAuditId(audit.getAuditId());
+                        info.setStatus(audit.getStatus());
+                        info.setInitiatorNodeId(audit.getApplyNodeId());
+                        info.setInitiatorName(audit.getApplyNodeId());
                     }
+                    List<BfiaProjectListInfo.NodeInfo> nodeInfos = projectParticipants(p.getProjectId());
                     info.setNodes(nodeInfos);
-                    // The frontend "进入项目" button reads partyVoteInfos[0].nodeName / .nodeId.
-                    // Mirror the participating nodes so the click handler has data to work with.
-                    info.setPartyVoteInfos(nodeInfos);
+                    info.setPartyVoteInfos(nodeInfos.stream()
+                            .filter(n -> !StringUtils.equals(n.getNodeId(), info.getInitiatorNodeId()))
+                            .collect(Collectors.toList()));
                     return info;
                 }).getContent(),
                 page.getTotalElements());
@@ -193,10 +181,9 @@ public class BfiaProjectServiceImpl implements BfiaProjectService {
      * {@code datatableId = datasetId}, {@code datatableName = name}.
      */
     private List<BfiaProjectVO.NodeVO> buildProjectNodes(String projectId) {
-        // In BFIA mode all known nodes participate in the project. Querying project_node
-        // is unreliable here because the bob entry is only written after cross-node sync
-        // completes, so we read all nodes from the node table instead.
-        List<NodeDO> allNodes = nodeRepository.findAll();
+        // Only explicitly enrolled project participants may supply data. The native
+        // node table also contains Kimi and must never define BFIA membership.
+        List<BfiaProjectListInfo.NodeInfo> allNodes = projectParticipants(projectId);
         List<BfiaDatasetDO> localDatasets = bfiaDatasetRepository.findAll();
 
         // Resolve the BFIA contract id for this project (needed for remote dataset queries).
@@ -246,11 +233,16 @@ public class BfiaProjectServiceImpl implements BfiaProjectService {
 
             return BfiaProjectVO.NodeVO.builder()
                     .nodeId(node.getNodeId())
-                    .nodeName(node.getName() != null ? node.getName() : node.getNodeId())
+                    .nodeName(node.getNodeName())
                     .datatables(nodeDatatables)
                     .build();
         }).collect(Collectors.toList());
     }
-}
 
+    private List<BfiaProjectListInfo.NodeInfo> projectParticipants(String projectId) {
+        return projectNodeRepository.findProjectNodesByProjectId(projectId).stream()
+                .distinct().map(id -> new BfiaProjectListInfo.NodeInfo(id, id))
+                .collect(Collectors.toList());
+    }
+}
 

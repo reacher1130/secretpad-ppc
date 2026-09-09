@@ -25,14 +25,14 @@ import org.secretflow.secretpad.common.exception.SecretpadException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.http.client.ClientHttpResponse;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
-import java.net.URI;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -61,8 +61,10 @@ public class FateFlowClient {
 
     @PostConstruct
     public void init() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        // FATE 2.2 uses JSON bodies even for GET. HttpURLConnection does not
+        // reliably preserve that method/body combination.
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder().connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS)).build());
         factory.setReadTimeout(READ_TIMEOUT_MS);
         this.restTemplate = new RestTemplate(factory);
         // We handle HTTP errors explicitly so that we can map them to
@@ -76,26 +78,36 @@ public class FateFlowClient {
     }
 
     /**
-     * Best-effort connectivity check. Returns true if FATE-Flow answers with a
-     * non-empty body, ignoring the retcode (a probe job id is expected to be
-     * missing).
+     * Validate the real FATE status API envelope. An unknown probe job returns
+     * code=0 and an empty data object in FATE 2.2.
      */
     public boolean checkConnection(String baseUrl) {
         try {
-            String url = UriComponentsBuilder.fromHttpUrl(baseUrl)
-                    .path("/schedule/job/status_all")
-                    .queryParam("job_id", "probe-" + System.currentTimeMillis())
-                    .build().toUriString();
-            // Raw request: we only care whether the HTTP layer answers, not the
-            // FATE retcode (a probe job id is expected to be unknown).
-            HttpHeaders headers = buildHeaders();
-            RequestEntity<Void> request = new RequestEntity<>(headers, HttpMethod.GET, URI.create(url));
-            ResponseEntity<Map> response = restTemplate.exchange(request, Map.class);
-            return response.getStatusCode().is2xxSuccessful()
-                    && response.getBody() != null
-                    && !response.getBody().isEmpty();
+            // A FATE endpoint registered for Kuscia tasks commonly uses
+            // host.docker.internal so adapter containers can reach the host.
+            // SecretPad itself runs on the host, where that Docker-only DNS
+            // name is not resolvable; use loopback only for this local probe
+            // and keep the original address for adapter submission.
+            String probeBaseUrl = baseUrl == null ? null
+                    : baseUrl.replace("//host.docker.internal", "//127.0.0.1");
+            Map<String, Object> response = getJobStatus(probeBaseUrl, "probe-" + System.currentTimeMillis());
+            return response.get("data") instanceof Map;
         } catch (Exception e) {
             log.debug("FATE-Flow connectivity check failed for {}: {}", baseUrl, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Native site readiness requires a real party identity (standalone stubs fail). */
+    public boolean checkNativeConnection(String baseUrl) {
+        try {
+            String base = baseUrl.replace("//host.docker.internal", "//127.0.0.1")
+                    .replaceAll("/+$", "").replaceAll("/v1/interconn$", "");
+            Map<String, Object> result = checkAndReturn(restTemplate.exchange(base + "/v2/site/info/query",
+                    HttpMethod.GET, new HttpEntity<>(buildHeaders()), Map.class));
+            return result.get("data") instanceof Map<?, ?> data && data.get("party_id") instanceof String id && !id.isBlank();
+        } catch (Exception e) {
+            log.debug("Native FATE readiness failed: {}", e.getMessage());
             return false;
         }
     }
@@ -104,7 +116,7 @@ public class FateFlowClient {
      * POST /schedule/job/create_all
      */
     public Map<String, Object> createJobAll(String baseUrl, Map<String, Object> body) {
-        return checkedPost(baseUrl + "/schedule/job/create_all", body);
+        return checkedPost(endpoint(baseUrl, "/schedule/job/create_all"), body);
     }
 
     /**
@@ -113,7 +125,7 @@ public class FateFlowClient {
     public Map<String, Object> startJob(String baseUrl, String jobId) {
         Map<String, Object> body = new HashMap<>();
         body.put("job_id", jobId);
-        return checkedPost(baseUrl + "/schedule/job/start", body);
+        return checkedPost(endpoint(baseUrl, "/schedule/job/start"), body);
     }
 
     /**
@@ -122,26 +134,26 @@ public class FateFlowClient {
     public Map<String, Object> stopJobAll(String baseUrl, String jobId) {
         Map<String, Object> body = new HashMap<>();
         body.put("job_id", jobId);
-        return checkedPost(baseUrl + "/schedule/job/stop_all", body);
+        return checkedPost(endpoint(baseUrl, "/schedule/job/stop_all"), body);
     }
 
     /**
-     * GET /schedule/job/status_all?job_id=...
+     * GET /v1/interconn/schedule/job/status_all with a JSON job_id body.
      */
     public Map<String, Object> getJobStatus(String baseUrl, String jobId) {
-        URI uri = UriComponentsBuilder.fromHttpUrl(baseUrl)
-                .path("/schedule/job/status_all")
-                .queryParam("job_id", jobId)
-                .build().toUri();
-        return checkedGet(uri.toString());
+        return checkAndReturn(restTemplate.exchange(
+                endpoint(baseUrl, "/schedule/job/status_all"), HttpMethod.GET,
+                new HttpEntity<>(Map.of("job_id", jobId), buildHeaders()), Map.class));
+    }
+
+    private String endpoint(String baseUrl, String path) {
+        String base = baseUrl.replaceAll("/+$", "");
+        if (!base.endsWith("/v1/interconn")) base += "/v1/interconn";
+        return base + path;
     }
 
     private Map<String, Object> checkedPost(String url, Map<String, Object> body) {
         return checkAndReturn(post(url, body));
-    }
-
-    private Map<String, Object> checkedGet(String url) {
-        return checkAndReturn(get(url));
     }
 
     private ResponseEntity<Map> post(String url, Map<String, Object> body) {
@@ -153,12 +165,6 @@ public class FateFlowClient {
         } catch (JsonProcessingException e) {
             throw SecretpadException.of(SystemErrorCode.ENCODE_ERROR, e, "Failed to serialize FATE request");
         }
-    }
-
-    private ResponseEntity<Map> get(String url) {
-        HttpHeaders headers = buildHeaders();
-        RequestEntity<Void> request = new RequestEntity<>(headers, HttpMethod.GET, URI.create(url));
-        return restTemplate.exchange(request, Map.class);
     }
 
     private HttpHeaders buildHeaders() {
@@ -176,8 +182,8 @@ public class FateFlowClient {
                     "FATE-Flow returned HTTP " + response.getStatusCode().value());
         }
         Map<String, Object> body = response.getBody();
-        if (body == null) {
-            throw SecretpadException.of(SystemErrorCode.REMOTE_CALL_ERROR, "FATE-Flow returned empty body");
+        if (body == null || (!body.containsKey("code") && !body.containsKey("retcode"))) {
+            throw SecretpadException.of(SystemErrorCode.REMOTE_CALL_ERROR, "FATE-Flow returned no status code");
         }
         int retcode = parseRetcode(body.get("retcode"));
         if (retcode == 0) {

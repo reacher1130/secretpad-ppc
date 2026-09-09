@@ -18,13 +18,16 @@ package org.secretflow.secretpad.web.controller.bfia;
 
 import org.secretflow.secretpad.common.util.UserContext;
 import org.secretflow.secretpad.service.bfia.BfiaDataService;
+import org.secretflow.secretpad.service.bfia.BfiaInputStorage;
 import org.secretflow.secretpad.service.bfia.BfiaOutputStorage;
+import org.secretflow.secretpad.service.DataService;
 import org.secretflow.secretpad.service.model.bfia.BfiaConfirmRequest;
 import org.secretflow.secretpad.service.model.bfia.BfiaDatasetApplyRequest;
 import org.secretflow.secretpad.service.model.bfia.BfiaDatasetVO;
 import org.secretflow.secretpad.service.model.bfia.BfiaListDatatableRequest;
 import org.secretflow.secretpad.service.model.common.SecretPadPageResponse;
 import org.secretflow.secretpad.service.model.common.SecretPadResponse;
+import org.secretflow.secretpad.service.model.data.UploadDataResultVO;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +36,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -59,7 +63,15 @@ import java.util.Map;
 public class BfiaDataController {
 
     private final BfiaDataService bfiaDataService;
+    private final BfiaInputStorage bfiaInputStorage;
     private final BfiaOutputStorage bfiaOutputStorage;
+    /**
+     * Reuse the platform's guarded CSV storage implementation.  BFIA uses the
+     * same Kuscia local datasource layout (/app/data/<node>/), so using the
+     * shared service keeps uploads visible to both the BFIA adapter and the
+     * native data manager without duplicating path validation logic.
+     */
+    private final DataService dataService;
 
     /**
      * 我方数据列表. Body: {pageNum, pageSize, types}.
@@ -180,17 +192,52 @@ public class BfiaDataController {
     }
 
     /**
+     * Upload a BFIA CSV data file.
+     *
+     * <p>The original BFIA page already sends this multipart request, but the
+     * endpoint was missing from the PAD backend. Accept both the historical
+     * {@code Node-Id} header and the page's {@code nodeId} form field so drag
+     * and drop, retry, and scripted demo uploads all follow the same path.</p>
+     */
+    @PostMapping(value = "upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public SecretPadResponse<UploadDataResultVO> upload(
+            @RequestHeader(value = "Node-Id", required = false) String nodeHeader,
+            @RequestParam(value = "nodeId", required = false) String nodeParam,
+            @RequestParam("file") MultipartFile file) {
+        String nodeId = firstNonBlank(nodeHeader, nodeParam, currentNodeId());
+        UploadDataResultVO result = dataService.upload(file, nodeId);
+        bfiaInputStorage.publish(nodeId, result.getRealName());
+        return SecretPadResponse.success(result);
+    }
+
+    /**
      * 创建数据表. Persists to bfia_dataset table.
      */
     @PostMapping("create")
     public SecretPadResponse<BfiaDatasetVO> create(@RequestBody(required = false) Map<String, Object> body) {
-        String name = firstNonBlank(str(body, "name"), str(body, "dataset_name"));
+        String uploadedName = firstNonBlank(str(body, "name"), str(body, "dataset_name"));
+        String name = firstNonBlank(str(body, "tableName"), str(body, "table_name"), uploadedName);
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("dataset name is required");
         }
         String description = str(body, "description");
         String contractId = firstNonBlank(str(body, "contract_id"), str(body, "contractId"));
-        return SecretPadResponse.success(bfiaDataService.createDataset(currentNodeId(), name, description, contractId));
+        BfiaDatasetVO dataset = bfiaDataService.createDataset(currentNodeId(), name, description, contractId);
+
+        // The upload page submits the random storage name and the edited
+        // schema together with the table form.  Persist those values in the
+        // BFIA isolation table; the graph converter uses them to construct
+        // the per-party Kuscia task_params data references.
+        String fileName = firstNonBlank(str(body, "realName"), str(body, "real_name"), uploadedName);
+        String fieldNames = firstNonBlank(str(body, "field_names"), str(body, "fieldNames"),
+                extractFieldNames(body == null ? null : body.get("datatableSchema")));
+        Boolean hasLabel = boolVal(body, "has_label", "hasLabel");
+        String namespace = firstNonBlank(str(body, "namespace"), "data");
+        if (fileName != null || fieldNames != null || hasLabel != null || namespace != null) {
+            dataset = bfiaDataService.updateDataset(currentNodeId(), dataset.getDatasetId(),
+                    fileName, fieldNames, hasLabel, namespace, null);
+        }
+        return SecretPadResponse.success(dataset);
     }
 
     /**
@@ -314,5 +361,41 @@ public class BfiaDataController {
         } catch (NumberFormatException e) {
             return def;
         }
+    }
+
+    private static Boolean boolVal(Map<String, Object> body, String... keys) {
+        if (body == null || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            Object value = body.get(key);
+            if (value != null) {
+                return Boolean.parseBoolean(String.valueOf(value));
+            }
+        }
+        return null;
+    }
+
+    /** Extract the ordered featureName list sent by the BFIA upload form. */
+    @SuppressWarnings("unchecked")
+    private static String extractFieldNames(Object schema) {
+        if (!(schema instanceof List<?> list)) {
+            return null;
+        }
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) {
+                Object name = map.get("featureName");
+                if (name == null) {
+                    name = map.get("feature_name");
+                }
+                if (name != null && !String.valueOf(name).isBlank()) {
+                    names.add(String.valueOf(name));
+                }
+            } else if (item != null && !String.valueOf(item).isBlank()) {
+                names.add(String.valueOf(item));
+            }
+        }
+        return names.isEmpty() ? null : String.join(",", names);
     }
 }

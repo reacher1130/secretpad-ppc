@@ -61,11 +61,27 @@ public class BfiaGraphServiceImpl implements BfiaGraphService {
     @Autowired
     private BfiaGraphNodeRepository bfiaGraphNodeRepository;
 
+    @org.springframework.beans.factory.annotation.Value("${secretpad.node-id}")
+    private String localNodeId;
+
+    @Override
+    public GraphNodeMaxIndexRefreshVO refreshNodeMaxIndex(GraphNodeMaxIndexRefreshRequest request) {
+        BfiaGraphDO graph = bfiaGraphRepository.findForIndexUpdate(request.getProjectId(), request.getGraphId())
+                .orElseThrow(() -> new IllegalArgumentException("BFIA graph does not exist"));
+        int next = Math.max(32, graph.getNodeMaxIndex() == null ? 32 : graph.getNodeMaxIndex());
+        if (request.getCurrentIndex() != null) {
+            next = Math.max(next, Math.addExact(request.getCurrentIndex(), 1));
+        }
+        graph.setNodeMaxIndex(Math.addExact(next, 1));
+        bfiaGraphRepository.save(graph);
+        return GraphNodeMaxIndexRefreshVO.builder().maxIndex(next).build();
+    }
+
     @Override
     public CreateGraphVO createGraph(CreateGraphRequest request) {
         String projectId = request.getProjectId();
         String graphId = UUIDUtils.random(8);
-        String ownerId = UserContext.getUser().getOwnerId();
+        String ownerId = localNodeId;
 
         BfiaGraphDO graphDO = BfiaGraphDO.builder()
                 .upk(new BfiaGraphDO.UPK(projectId, graphId))
@@ -107,6 +123,10 @@ public class BfiaGraphServiceImpl implements BfiaGraphService {
                     .build();
         } else {
             graphDO = graphOptional.get();
+            if (Integer.valueOf(1).equals(graphDO.getIsDraft())
+                    && (request.getNodes() != null || request.getEdges() != null)) {
+                throw new IllegalStateException("Submitted BFIA flow cannot be edited");
+            }
         }
 
         List<GraphEdge> edges = request.getEdges();
@@ -127,10 +147,28 @@ public class BfiaGraphServiceImpl implements BfiaGraphService {
     }
 
     private void replaceNodes(String projectId, String graphId, List<GraphNodeInfo> nodes, BfiaGraphDO graphDO) {
-        bfiaGraphNodeRepository.deleteByProjectIdAndGraphId(projectId, graphId);
-        List<BfiaGraphNodeDO> newNodes = nodes.stream()
-                .map(nodeInfo -> toBfiaGraphNodeDO(projectId, graphId, nodeInfo))
-                .collect(Collectors.toList());
+        // Never bulk-delete rows which are still managed by Hibernate and merge them again:
+        // saving a config after reading the graph otherwise raises StaleObjectStateException.
+        var existing = bfiaGraphNodeRepository.findByProjectIdAndGraphId(projectId, graphId).stream()
+                .collect(Collectors.toMap(n -> n.getUpk().getGraphNodeId(), n -> n));
+        List<BfiaGraphNodeDO> newNodes = new ArrayList<>();
+        var seen = new java.util.HashSet<String>();
+        for (GraphNodeInfo info : nodes) {
+            if (info.getGraphNodeId() == null || !seen.add(info.getGraphNodeId())) {
+                throw new IllegalArgumentException("Missing or duplicate BFIA graph node ID");
+            }
+            BfiaGraphNodeDO node = existing.remove(info.getGraphNodeId());
+            BfiaGraphNodeDO incoming = toBfiaGraphNodeDO(projectId, graphId, info);
+            if (node == null) {
+                node = incoming;
+            } else {
+                node.setGraphNodeName(incoming.getGraphNodeName());
+                node.setNodeDefId(incoming.getNodeDefId());
+                node.setParams(incoming.getParams());
+            }
+            newNodes.add(node);
+        }
+        existing.values().forEach(n -> bfiaGraphNodeRepository.deleteRemovedNode(n.getUpk()));
         bfiaGraphNodeRepository.saveAll(newNodes);
         if (graphDO != null) {
             graphDO.setNodes(newNodes);
@@ -170,23 +208,17 @@ public class BfiaGraphServiceImpl implements BfiaGraphService {
         if (graphDO == null) {
             return;
         }
-
-        List<BfiaGraphNodeDO> nodeDOs = bfiaGraphNodeRepository.findByProjectIdAndGraphId(projectId, graphId);
-        List<GraphNodeInfo> nodeInfos = new ArrayList<>();
-        if (!CollectionUtils.isEmpty(nodeDOs)) {
-            for (BfiaGraphNodeDO nodeDO : nodeDOs) {
-                GraphNodeInfo info = toGraphNodeInfo(nodeDO);
-                if (info.getGraphNodeId() != null && info.getGraphNodeId().equals(request.getNode().getGraphNodeId())) {
-                    nodeInfos.add(request.getNode());
-                } else {
-                    nodeInfos.add(info);
-                }
-            }
-        } else {
-            nodeInfos.add(request.getNode());
+        if (Integer.valueOf(1).equals(graphDO.getIsDraft())) {
+            throw new IllegalStateException("Submitted BFIA flow cannot be edited");
         }
 
-        replaceNodes(projectId, graphId, nodeInfos, graphDO);
+        var node = bfiaGraphNodeRepository.findById(new BfiaGraphNodeDO.UPK(projectId, graphId,
+                request.getNode().getGraphNodeId())).orElseThrow(() -> new IllegalArgumentException("BFIA graph node not found"));
+        var incoming = toBfiaGraphNodeDO(projectId, graphId, request.getNode());
+        node.setGraphNodeName(incoming.getGraphNodeName());
+        node.setNodeDefId(incoming.getNodeDefId());
+        node.setParams(incoming.getParams());
+        bfiaGraphNodeRepository.save(node);
     }
 
     @Override

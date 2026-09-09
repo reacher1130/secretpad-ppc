@@ -69,6 +69,15 @@ public class BfiaGraphDO extends BaseAggregationRoot<BfiaGraphDO> {
     @Column(name = "max_parallelism")
     private Integer maxParallelism;
 
+    @Builder.Default
+    @Column(name = "node_max_index", nullable = false)
+    private Integer nodeMaxIndex = 32;
+
+    /** Frontend convention: 0 editable draft, 1 submitted/frozen. */
+    @Builder.Default
+    @Column(name = "is_draft", nullable = false)
+    private Integer isDraft = 0;
+
     @Override
     public String getProjectId() {
         return this.upk.projectId;

@@ -31,6 +31,10 @@ import java.util.List;
  */
 @Repository
 public interface BfiaJobRepository extends BaseRepository<BfiaJobDO, String> {
+    // Project only IDs: historical DAG/config JSON need not be loaded every five seconds.
+    @Query("select j.jobId from BfiaJobDO j where upper(coalesce(j.status, '')) not in ('SUCCESS', 'FAILED')")
+    List<String> findUnfinishedJobIds();
+
     @Query("from BfiaJobDO j where j.projectId = :projectId order by j.gmtCreate desc")
     List<BfiaJobDO> findByProjectId(@Param("projectId") String projectId);
 }

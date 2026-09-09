@@ -33,6 +33,10 @@ import java.util.List;
 @Repository
 public interface BfiaGraphNodeRepository extends BaseRepository<BfiaGraphNodeDO, BfiaGraphNodeDO.UPK> {
 
+    @Modifying
+    @Query("delete from BfiaGraphNodeDO n where n.upk = :upk")
+    void deleteRemovedNode(@Param("upk") BfiaGraphNodeDO.UPK upk);
+
     @Query("from BfiaGraphNodeDO n where n.upk.projectId = :projectId and n.upk.graphId = :graphId")
     List<BfiaGraphNodeDO> findByProjectIdAndGraphId(@Param("projectId") String projectId,
                                                     @Param("graphId") String graphId);

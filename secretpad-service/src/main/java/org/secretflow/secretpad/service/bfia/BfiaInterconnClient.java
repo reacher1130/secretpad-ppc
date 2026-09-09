@@ -134,6 +134,16 @@ public class BfiaInterconnClient {
         }
     }
 
+    /** Management mutations must not report success when the peer rejected or missed them. */
+    public void postChecked(String sourceNodeId, String targetNodeId, String path, Object body) {
+        Map<String, Object> response = post(sourceNodeId, targetNodeId, path, body);
+        Object status = response == null ? null : response.get("status");
+        if (!(status instanceof Map<?, ?> statusMap)
+                || !(statusMap.get("code") instanceof Number code) || code.intValue() != 0) {
+            throw new IllegalStateException("BFIA 对端 " + targetNodeId + " 未确认 " + path);
+        }
+    }
+
     /**
      * Query a peer node's BFIA datasets via the interconn data list endpoint (GET
      * {@code /v1/interconn/data/list}). Used by {@code buildProjectNodes()} so the local
@@ -182,6 +192,42 @@ public class BfiaInterconnClient {
         } catch (Exception e) {
             log.error("listRemoteDatasets failed: url={}, target={}, err={}", url, targetNodeId, e.getMessage());
             return java.util.Collections.emptyList();
+        }
+    }
+
+    /**
+     * Resolve one remote dataset with the metadata required by BFIA task private parameters.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> queryRemoteDataset(
+            String sourceNodeId, String targetNodeId, String datasetId) {
+        if (!crossNodeEnabled || StringUtils.isBlank(datasetId)) {
+            return null;
+        }
+        String base = resolvePadHttpBase(targetNodeId);
+        if (base == null) {
+            return null;
+        }
+        String url = base + "/v1/interconn/data/query?contract_id=&dataset_id="
+                + java.net.URLEncoder.encode(datasetId, java.nio.charset.StandardCharsets.UTF_8);
+        Map<String, String> headers = buildHeaders(sourceNodeId, targetNodeId);
+        try {
+            org.springframework.http.HttpHeaders httpHeaders = new org.springframework.http.HttpHeaders();
+            headers.forEach(httpHeaders::add);
+            org.springframework.http.HttpEntity<Void> entity = new org.springframework.http.HttpEntity<>(httpHeaders);
+            org.springframework.http.ResponseEntity<String> response =
+                    new org.springframework.web.client.RestTemplate().exchange(
+                            url, org.springframework.http.HttpMethod.GET, entity, String.class);
+            if (StringUtils.isBlank(response.getBody())) {
+                return null;
+            }
+            Map<String, Object> responseMap = JsonUtils.toJavaMap(response.getBody());
+            Object data = responseMap.get("data");
+            return data instanceof Map<?, ?> ? (Map<String, Object>) data : null;
+        } catch (Exception e) {
+            log.error("queryRemoteDataset failed: target={}, datasetId={}, err={}",
+                    targetNodeId, datasetId, e.getMessage());
+            return null;
         }
     }
 

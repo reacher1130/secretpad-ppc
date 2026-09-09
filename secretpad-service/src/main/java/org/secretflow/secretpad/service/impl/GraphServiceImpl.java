@@ -50,6 +50,7 @@ import org.secretflow.secretpad.service.model.node.NodeSimpleInfo;
 import org.secretflow.secretpad.service.model.project.GetProjectJobTaskOutputRequest;
 import org.secretflow.secretpad.service.model.project.StopProjectJobTaskRequest;
 import org.secretflow.secretpad.service.model.report.ScqlReport;
+import org.secretflow.secretpad.service.protocol.ProtocolConfigService;
 import org.secretflow.secretpad.service.util.AutonomyNodeRouteUtil;
 import org.secretflow.secretpad.service.util.GraphUtils;
 import org.secretflow.secretpad.service.util.ResultConvertUtil;
@@ -148,6 +149,8 @@ public class GraphServiceImpl implements GraphService {
     private DatasourceManager datasourceManager;
     @Resource
     private ProjectNodeRepository projectNodeRepository;
+    @Autowired
+    private ProtocolConfigService protocolConfigService;
     @Resource
     private ProjectModelPackRepository projectModelPackRepository;
     @Resource
@@ -671,6 +674,9 @@ public class GraphServiceImpl implements GraphService {
     @Transactional
     @Override
     public StartGraphVO startGraph(StartGraphRequest request) {
+        if (!protocolConfigService.isActive("secretflow")) {
+            throw new IllegalStateException("SecretFlow protocol is not active on this node");
+        }
         ProjectJob projectJob = buildProjectJob(request);
         jobChain.proceed(projectJob);
         if (!GraphContext.isScheduled()) {
@@ -767,12 +773,20 @@ public class GraphServiceImpl implements GraphService {
                 Optional<ProjectTaskDO> taskDOOptional = taskRepository.findLatestTasks(projectId, graphNodeId);
                 GraphNodeTaskStatus status = GraphNodeTaskStatus.STAGING;
                 if (taskDOOptional.isPresent()) {
-                    status = taskDOOptional.get().getStatus();
-                    nodeStatusVO.setTaskId(taskDOOptional.get().getUpk().getTaskId());
-                    nodeStatusVO.setJobId(taskDOOptional.get().getUpk().getJobId());
-                    nodeStatusVO.setParties(nodeRepository.findByNodeIdIn(taskDOOptional.get().getParties()).stream().map(e -> NodeSimpleInfo.builder().nodeName(e.getName()).nodeId(e.getNodeId()).build()).collect(Collectors.toList()));
-                    nodeStatusVO.setProgress(taskDOOptional.get().getExtraInfo().getProgress());
-                    jobIds.add(taskDOOptional.get().getUpk().getJobId());
+                    ProjectTaskDO taskDO = taskDOOptional.get();
+                    status = taskDO.getStatus();
+                    nodeStatusVO.setTaskId(taskDO.getUpk().getTaskId());
+                    nodeStatusVO.setJobId(taskDO.getUpk().getJobId());
+                    nodeStatusVO.setParties(nodeRepository.findByNodeIdIn(taskDO.getParties()).stream().map(e -> NodeSimpleInfo.builder().nodeName(e.getName()).nodeId(e.getNodeId()).build()).collect(Collectors.toList()));
+                    nodeStatusVO.setProgress(taskDO.getExtraInfo().getProgress());
+                    // A datatable node is a logical input selector. Its task row
+                    // can point at an old approval job that remains open even
+                    // after the real compute node has succeeded. Do not let that
+                    // stale approval job keep the graph in a non-finished state.
+                    if (taskDO.getGraphNode() == null
+                            || !COMP_READ_DATA_DATATABLE_ID.equals(taskDO.getGraphNode().getCodeName())) {
+                        jobIds.add(taskDO.getUpk().getJobId());
+                    }
                 }
                 nodeStatusVO.setStatus(status);
                 nodeStatus.add(nodeStatusVO);

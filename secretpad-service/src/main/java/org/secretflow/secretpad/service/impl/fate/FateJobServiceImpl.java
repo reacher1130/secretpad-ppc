@@ -69,9 +69,11 @@ public class FateJobServiceImpl implements FateJobService {
                         "fate cluster not found: " + request.getClusterId()));
 
         String jobId = generateJobId();
-        String initiatorNodeId = StringUtils.defaultIfBlank(request.getInitiatorNodeId(), envService.getPlatformNodeId());
+        String initiatorNodeId = envService.getPlatformNodeId();
         String dagJson = toJson(request.getDag());
-        String configJson = toJson(request.getConfig());
+        Map<String, Object> storedConfig = new LinkedHashMap<>(request.getConfig());
+        storedConfig.put("_executionBackend", "native-fate-v2");
+        String configJson = toJson(storedConfig);
 
         String status = "PENDING";
         String errMsg = "";
@@ -86,7 +88,7 @@ public class FateJobServiceImpl implements FateJobService {
                     jobId, cluster.getClusterId(), kusciaJobRequest.getInitiator());
         } catch (Exception e) {
             status = "FAILED";
-            errMsg = e.getMessage();
+            errMsg = StringUtils.defaultIfBlank(e.getMessage(), "Kuscia 创建作业失败，请检查调度服务日志");
             log.error("submit FATE job failed: clusterId={}, jobId={}", cluster.getClusterId(), jobId, e);
         }
 
@@ -139,25 +141,37 @@ public class FateJobServiceImpl implements FateJobService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<FateJobVO> listByClusterId(String clusterId) {
         if (StringUtils.isBlank(clusterId)) {
             throw SecretpadException.of(SystemErrorCode.VALIDATION_ERROR, "clusterId is required");
         }
         return fateJobRepository.findByClusterId(clusterId).stream()
-                .map(this::toVO)
+                .map(this::refreshAndConvert)
                 .collect(Collectors.toList());
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<FateJobVO> listByProjectId(String projectId) {
         if (StringUtils.isBlank(projectId)) {
             throw SecretpadException.of(SystemErrorCode.VALIDATION_ERROR, "projectId is required");
         }
         return fateJobRepository.findByProjectId(projectId).stream()
-                .map(this::toVO)
+                .map(this::refreshAndConvert)
                 .collect(Collectors.toList());
+    }
+
+    private FateJobVO refreshAndConvert(FateJobDO job) {
+        try {
+            JobStatus refreshed = refreshStatus(job);
+            job.setStatus(refreshed.getStatus());
+            job.setErrMsg(refreshed.getErrMsg());
+        } catch (Exception e) {
+            log.debug("refresh FATE job status while listing failed: jobId={}, err={}",
+                    job.getJobId(), e.getMessage());
+        }
+        return toVO(fateJobRepository.save(job));
     }
 
     private FateJobDO findJob(String jobId) {
@@ -179,10 +193,21 @@ public class FateJobServiceImpl implements FateJobService {
                 .build();
         Job.QueryJobResponse response = kusciaJobService.queryJob(request, job.getInitiatorNodeId());
         if (response.getData() == null || !response.getData().hasStatus()) {
-            return new JobStatus(job.getStatus(), "");
+            return new JobStatus(job.getStatus(), job.getErrMsg());
         }
         Job.JobStatusDetail status = response.getData().getStatus();
+        if ("Succeeded".equals(status.getState()) && !usesNativeExecution(job)) {
+            return new JobStatus("UNVERIFIED", "旧适配器仅验证退出状态，未验证原生 FATE 算子成功；请重新提交验收");
+        }
         return new JobStatus(mapKusciaState(status.getState()), status.getErrMsg());
+    }
+
+    private boolean usesNativeExecution(FateJobDO job) {
+        try {
+            return "native-fate-v2".equals(JsonUtils.toJavaMap(job.getJobConfig()).get("_executionBackend"));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private String mapKusciaState(String state) {

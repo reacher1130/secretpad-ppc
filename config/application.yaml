@@ -195,7 +195,9 @@ secretpad:
   center-platform-service: secretpad.master.svc
   gateway: ${KUSCIA_GW_ADDRESS:127.0.0.1:80}
   auth:
-    enabled: true
+    # Demo deployments are unauthenticated by default. Set
+    # SECRETPAD_AUTH_ENABLED=true for a production/authenticated deployment.
+    enabled: ${SECRETPAD_AUTH_ENABLED:false}
     pad_name: ${SECRETPAD_USER_NAME}
     pad_pwd: ${SECRETPAD_PASSWORD}
   response:
@@ -223,6 +225,13 @@ secretpad:
   protocol:
     default-protocol: ${SECRETPAD_PROTOCOL_DEFAULT:secretflow}
     can-switch: ${SECRETPAD_PROTOCOL_CAN_SWITCH:true}
+    state-file: ${SECRETPAD_PROTOCOL_STATE_FILE:./data/active-protocol}
+    fate-flow-address: ${FATE_FLOW_ADDRESS:http://127.0.0.1:19381}
+    fate-peer-flow-address: ${FATE_PEER_FLOW_ADDRESS:http://127.0.0.1:19382}
+    paddledtx-requester-command: ${PADDLEDTX_REQUESTER_COMMAND:}
+    paddledtx-requester-config: ${PADDLEDTX_REQUESTER_CONFIG:}
+    paddledtx-peer-health-address: ${PADDLEDTX_PEER_HEALTH_ADDRESS:http://127.0.0.1:8512/v1/task/list}
+    paddledtx-health-address: ${PADDLEDTX_HEALTH_ADDRESS:http://127.0.0.1:8511/v1/task/list}
 
   component:
     hide:

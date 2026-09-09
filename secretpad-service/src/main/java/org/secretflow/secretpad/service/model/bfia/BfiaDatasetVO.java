@@ -1,5 +1,6 @@
 package org.secretflow.secretpad.service.model.bfia;
 
+import com.fasterxml.jackson.annotation.JsonGetter;
 import lombok.*;
 
 import java.util.List;
@@ -27,6 +28,17 @@ public class BfiaDatasetVO {
     private List<AuthProjectVO> authProjects;
     /** Frontend "创建时间" column reads gmtCreate (unix seconds) */
     private Long gmtCreate;
+
+    /**
+     * The legacy BFIA management pages use snake_case for dataset identifiers.
+     * Keep the canonical camelCase field for new clients and expose this
+     * read-only alias so existing list/detail/action buttons address the same
+     * dataset instead of sending an empty id.
+     */
+    @JsonGetter("dataset_id")
+    public String getDataset_id() {
+        return datasetId;
+    }
 
     /** Simple auth-project VO for the dataset list */
     @Data

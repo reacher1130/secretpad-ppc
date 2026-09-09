@@ -44,7 +44,12 @@ public class FateJobController {
 
     @PostMapping("submit")
     public SecretPadResponse<FateJobVO> submit(@RequestBody FateJobRequest request) {
-        return SecretPadResponse.success(fateJobService.submit(request));
+        FateJobVO job = fateJobService.submit(request);
+        if ("FAILED".equals(job.getStatus())) {
+            return new SecretPadResponse<>(new SecretPadResponse.SecretPadResponseStatus(
+                    202011902, "FATE 作业提交失败：" + job.getErrMsg()), job);
+        }
+        return SecretPadResponse.success(job);
     }
 
     @PostMapping("stop")

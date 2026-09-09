@@ -59,6 +59,9 @@ public class BfiaFlowController {
     private final BfiaFlowService bfiaFlowService;
     private final BfiaGraphService bfiaGraphService;
     private final ProjectService projectService;
+    private final org.secretflow.secretpad.service.bfia.BfiaFlowLifecycleService lifecycle;
+    @org.springframework.beans.factory.annotation.Value("${secretpad.node-id}")
+    private String localNodeId;
 
     @PostMapping("/component/list")
     public SecretPadResponse<Map<String, CompListVO>> listComponents() {
@@ -89,6 +92,9 @@ public class BfiaFlowController {
     @PostMapping("/save")
     public SecretPadResponse<Void> saveGraph(@RequestBody Map<String, Object> body) {
         bfiaGraphService.fullUpdateGraph(toRequest(body, FullUpdateGraphRequest.class));
+        if ("1".equals(String.valueOf(body.get("isDraft")))) {
+            lifecycle.submit(str(body, "projectId"), firstNonBlank(str(body, "flowId"), str(body, "graphId")));
+        }
         return SecretPadResponse.success();
     }
 
@@ -115,7 +121,7 @@ public class BfiaFlowController {
 
     @PostMapping("/node/max_index")
     public SecretPadResponse<GraphNodeMaxIndexRefreshVO> graphNodeMaxIndexRefresh(@RequestBody Map<String, Object> body) {
-        return SecretPadResponse.success(graphService.refreshNodeMaxIndex(toRequest(body, GraphNodeMaxIndexRefreshRequest.class)));
+        return SecretPadResponse.success(bfiaGraphService.refreshNodeMaxIndex(toRequest(body, GraphNodeMaxIndexRefreshRequest.class)));
     }
 
     @PostMapping("/start")
@@ -127,10 +133,20 @@ public class BfiaFlowController {
      * 流程产出表查询 (结果视图). Body: {projectId, flowId(=graphId)}. Reuses the native project out-table.
      */
     @PostMapping("/getOutTable")
-    public SecretPadResponse<ProjectOutputVO> getOutTable(@RequestBody Map<String, Object> body) {
+    public SecretPadResponse<Object> getOutTable(@RequestBody Map<String, Object> body) {
         String projectId = str(body, "projectId");
         String graphId = firstNonBlank(str(body, "flowId"), str(body, "graphId"));
-        return SecretPadResponse.success(projectService.getProjectAllOutTable(projectId, graphId));
+        GetGraphRequest request = new GetGraphRequest();
+        request.setProjectId(projectId);
+        request.setGraphId(graphId);
+        var graph = bfiaGraphService.getGraphDetail(request);
+        if (graph == null) throw new IllegalArgumentException("BFIA graph does not exist");
+        // These are output port definitions, not claims that a computation produced a result.
+        var outputs = graph.getNodes().stream()
+                .filter(n -> !"read_data/datatable".equals(n.getCodeName()))
+                .map(n -> Map.of("graphNodeId", n.getGraphNodeId(),
+                        "outputs", n.getOutputs() == null ? List.of() : n.getOutputs())).toList();
+        return SecretPadResponse.success(Map.of("projectId", projectId, "nodes", outputs));
     }
 
     /**
@@ -172,8 +188,13 @@ public class BfiaFlowController {
             item.put("projectId", vo.getProjectId());
             item.put("name", vo.getName());
             item.put("ownerId", vo.getOwnerId());
-            item.put("isDraft", 0);
-            item.put("status", "DRAFT");
+            var graph = bfiaGraphService.getGraphDO(projectId, vo.getGraphId());
+            var audit = lifecycle.latestAudit(projectId, vo.getGraphId());
+            item.put("isDraft", graph.getIsDraft());
+            item.put("status", audit == null ? null : audit.getStatus());
+            item.put("auditId", audit == null ? null : audit.getAuditId());
+            item.put("applyNodeId", audit == null ? null : audit.getApplyNodeId());
+            item.put("applyNodeName", audit == null ? null : audit.getApplyNodeId());
             content.add(item);
         }
         Map<String, Object> result = new java.util.LinkedHashMap<>();
@@ -191,7 +212,7 @@ public class BfiaFlowController {
         String flowId = firstNonBlank(str(body, "flowId"), str(body, "graphId"));
         String contractId = firstNonBlank(str(body, "contract_id"), str(body, "contractId"));
         return SecretPadResponse.success(
-                bfiaFlowService.applyFlowAudit(projectId, flowId, contractId, currentNodeId()));
+                lifecycle.apply(projectId, flowId));
     }
 
     /**
@@ -201,11 +222,11 @@ public class BfiaFlowController {
     public SecretPadResponse<Boolean> confirmFlow(@RequestBody Map<String, Object> body) {
         String auditId = firstNonBlank(str(body, "audit_id"), str(body, "auditId"));
         String status = str(body, "status");
-        return SecretPadResponse.success(bfiaFlowService.confirmFlowAudit(auditId, status));
+        return SecretPadResponse.success(lifecycle.confirm(auditId, status, localNodeId, true));
     }
 
     private String currentNodeId() {
-        return UserContext.getUser().getOwnerId();
+        return localNodeId;
     }
 
     private static String str(Map<String, Object> body, String key) {

@@ -60,10 +60,13 @@ import java.util.Map;
 public class BfiaProjectController {
 
     private final BfiaProjectService bfiaProjectService;
+    private final org.secretflow.secretpad.service.bfia.BfiaDataService bfiaDataService;
     private final BfiaInterconnClient bfiaInterconnClient;
     private final ProjectService projectService;
     private final BfiaContractRepository bfiaContractRepository;
     private final ProjectNodeRepository projectNodeRepository;
+    private final org.secretflow.secretpad.persistence.repository.bfia.BfiaNodeRepository bfiaNodeRepository;
+    private final org.secretflow.secretpad.persistence.repository.bfia.BfiaAuditRepository bfiaAuditRepository;
 
     /**
      * 项目列表 (管理层 §5.5). GET params: page_num, page_size, contract_id(optional).
@@ -97,15 +100,6 @@ public class BfiaProjectController {
                 .type(firstNonBlank(str(body, "type"), "PROJECT"))
                 .build();
         String sourceNodeId = currentNodeId();
-        Map<String, String> result = bfiaProjectService.apply(request, sourceNodeId);
-        String projectId = result.get("project_id");
-
-        // 补写标准 project_node 表：BFIA 项目存在 bfia_project 表，但 fullUpdateGraph /
-        // getControlNodeIds 查的是 project_node 表，缺失会导致"can't find any nodes in project"。
-        ensureProjectNode(projectId, sourceNodeId);
-
-        // East-west propagation (管理层 §5.1): notify the partner node so it can审批 on its side.
-        // Best-effort and feature-flagged; single-node deployments skip this entirely.
         String targetNodeId = firstNonBlank(str(body, "target_node_id"), str(body, "targetNodeId"));
         // If target_node_id not explicitly provided, derive it from the contract_id (cooperative
         // node record stores the peer node id).
@@ -113,8 +107,18 @@ public class BfiaProjectController {
             BfiaContractDO contract = bfiaContractRepository.findByContractId(request.getContractId());
             if (contract != null) {
                 targetNodeId = contract.getNodeId();
+            } else if (bfiaNodeRepository.existsById(request.getContractId())) {
+                // Older imported BFIA nodes use the registered node ID as contractId.
+                targetNodeId = request.getContractId();
             }
         }
+        if (targetNodeId == null || sourceNodeId.equals(targetNodeId)
+                || !bfiaNodeRepository.existsById(targetNodeId)) {
+            throw new IllegalArgumentException("请选择已登记的 BFIA 对端节点");
+        }
+        Map<String, String> result = bfiaProjectService.apply(request, sourceNodeId);
+        String projectId = result.get("project_id");
+        ensureProjectNode(projectId, sourceNodeId);
         // 合作方也要写入 project_node，否则后续 BFIA 作业无法解析参与方。
         if (targetNodeId != null) {
             ensureProjectNode(projectId, targetNodeId);
@@ -122,7 +126,7 @@ public class BfiaProjectController {
         if (bfiaInterconnClient.isEnabled() && targetNodeId != null) {
             request.setProjectId(projectId);
             request.setAuditId(result.get("audit_id"));
-            bfiaInterconnClient.post(sourceNodeId, targetNodeId, "/v1/interconn/project/audit/apply", request);
+            bfiaInterconnClient.postChecked(sourceNodeId, targetNodeId, "/v1/interconn/project/audit/apply", request);
         }
         return SecretPadResponse.success(result);
     }
@@ -136,7 +140,18 @@ public class BfiaProjectController {
                 .auditId(firstNonBlank(str(body, "audit_id"), str(body, "auditId")))
                 .status(str(body, "status"))
                 .build();
-        return SecretPadResponse.success(bfiaProjectService.confirm(request, currentNodeId()));
+        String sourceNodeId = currentNodeId();
+        var audit = bfiaAuditRepository.findById(request.getAuditId())
+                .orElseThrow(() -> new IllegalArgumentException("审批不存在"));
+        if (sourceNodeId.equals(audit.getApplyNodeId())
+                || !projectNodeRepository.findProjectNodesByProjectId(audit.getProjectId()).contains(sourceNodeId)) {
+            throw new IllegalArgumentException("只有受邀参与方可以审批项目");
+        }
+        if (bfiaInterconnClient.isEnabled()) {
+            bfiaInterconnClient.postChecked(sourceNodeId, audit.getApplyNodeId(),
+                    "/v1/interconn/project/audit/confirm", request);
+        }
+        return SecretPadResponse.success(bfiaProjectService.confirm(request, sourceNodeId));
     }
 
     /**
@@ -162,8 +177,29 @@ public class BfiaProjectController {
      */
     @PostMapping("datatable/get")
     public SecretPadResponse<Object> getProjectDatatable(@RequestBody Map<String, Object> body) {
-        GetProjectDatatableRequest request = JsonUtils.toJavaObject(JsonUtils.toJSONString(body), GetProjectDatatableRequest.class);
-        return SecretPadResponse.success(projectService.getProjectDatatable(request));
+        String projectId = str(body, "projectId");
+        String datasetId = str(body, "datatableId");
+        String nodeId = str(body, "nodeId");
+        var nodes = projectNodeRepository.findProjectNodesByProjectId(projectId);
+        if (!nodes.contains(currentNodeId()) || !nodes.contains(nodeId)) {
+            throw new IllegalArgumentException("BFIA dataset node is not a project participant");
+        }
+        Map<String, Object> dataset;
+        if (currentNodeId().equals(nodeId)) {
+            dataset = JsonUtils.toJavaMap(JsonUtils.toJSONString(bfiaDataService.queryDataset(null, datasetId)), Object.class);
+        } else {
+            dataset = bfiaInterconnClient.queryRemoteDataset(currentNodeId(), nodeId, datasetId);
+        }
+        if (dataset == null || dataset.get("fieldNames") == null) {
+            throw new IllegalArgumentException("BFIA dataset schema is unavailable");
+        }
+        var configs = new java.util.ArrayList<Map<String, Object>>();
+        for (String field : String.valueOf(dataset.get("fieldNames")).split(",")) {
+            if (!field.isBlank()) configs.add(Map.of("colName", field.trim(), "colType", "str",
+                    "isAssociateKey", false, "isGroupKey", false, "isLabelKey", false));
+        }
+        return SecretPadResponse.success(Map.of("datatableId", datasetId,
+                "datatableName", String.valueOf(dataset.get("name")), "configs", configs));
     }
 
     private String currentNodeId() {

@@ -35,12 +35,16 @@ public class BfiaSyncProjectController {
     private final BfiaProjectService bfiaProjectService;
     private final ProjectNodeRepository projectNodeRepository;
 
+    @org.springframework.beans.factory.annotation.Value("${secretpad.node-id}")
+    private String localNodeId;
+
     @PostMapping("audit/apply")
     public SecretPadResponse<HashMap<String, String>> apply(@RequestHeader("kuscia-origin-source") String nodeId, @RequestBody String p) {
         BfiaProjectApplyRequest request = JsonUtils.toJavaObject(p, BfiaProjectApplyRequest.class);
         HashMap<String, String> result = bfiaProjectService.apply(request, nodeId);
         // 补写标准 project_node 表，使 fullUpdateGraph / getControlNodeIds 能找到参与方节点
         ensureProjectNode(result.get("project_id"), nodeId);
+        ensureProjectNode(result.get("project_id"), localNodeId);
         return SecretPadResponse.success(result);
     }
 

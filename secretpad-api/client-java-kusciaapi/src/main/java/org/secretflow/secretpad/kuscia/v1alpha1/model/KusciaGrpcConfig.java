@@ -76,6 +76,7 @@ public class KusciaGrpcConfig implements Serializable {
     @NotNull(message = "mode cannot be null or empty")
     private KusciaModeEnum mode;
 
+    @lombok.ToString.Exclude
     private String token;
 
     private String certFile;

@@ -18,11 +18,14 @@ package org.secretflow.secretpad.service.model.protocol;
 
 import lombok.Data;
 
+import java.util.List;
+import java.util.Map;
+
 @Data
 public class ProtocolConfigVO {
 
     /**
-     * Default protocol for this SecretPad instance: "secretflow" or "bfia".
+     * Default protocol for this SecretPad instance.
      */
     private String defaultProtocol;
 
@@ -30,4 +33,15 @@ public class ProtocolConfigVO {
      * Whether the user is allowed to switch protocols in the UI.
      */
     private boolean canSwitch;
+
+    /**
+     * Protocol currently prepared by the backend.
+     */
+    private String activeProtocol;
+
+    /** Protocols exposed by this build, in the order shown by the frontend. */
+    private List<String> supportedProtocols;
+
+    /** Human-readable engine labels used by the protocol switcher. */
+    private Map<String, String> engineByProtocol;
 }

@@ -41,9 +41,11 @@ import org.secretflow.secretpad.service.bfia.BfiaGraphService;
 import org.secretflow.secretpad.service.bfia.BfiaInterconnClient;
 import org.secretflow.secretpad.service.bfia.BfiaOutputStorage;
 import org.secretflow.secretpad.service.graph.GraphContext;
+import org.secretflow.secretpad.service.graph.converter.BfiaGraphExecutionPlanner;
 import org.secretflow.secretpad.service.graph.converter.BfiaJobConverter;
 import org.secretflow.secretpad.service.model.graph.*;
 import org.secretflow.secretpad.service.util.JobUtils;
+import org.secretflow.secretpad.service.protocol.ProtocolConfigService;
 import org.secretflow.v1alpha1.kusciaapi.Job;
 
 import lombok.RequiredArgsConstructor;
@@ -83,7 +85,10 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
 
     private final BfiaGraphService bfiaGraphService;
     private final BfiaComponentService bfiaComponentService;
+    private final BfiaGraphExecutionPlanner executionPlanner;
     private final BfiaJobConverter bfiaJobConverter;
+    private final ProtocolConfigService protocolConfigService;
+    private final org.secretflow.secretpad.service.bfia.BfiaFlowLifecycleService lifecycle;
     private final DynamicKusciaGrpcConfig dynamicKusciaGrpcConfig;
     private final NodeRepository nodeRepository;
     private final ProjectNodeRepository projectNodeRepository;
@@ -98,6 +103,12 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
 
     @Value("${KUSCIA_API_LITE_BOB_ADDRESS:}")
     private String bobKusciaHost;
+
+    @Value("${secretpad.node-id:alice}")
+    private String localNodeId;
+
+    @Value("${SECRETPAD_BFIA_PEER_NODE_ID:bob}")
+    private String bfiaPeerNodeId;
     /**
      * Optional: only present when the BFIA datasource is configured. Used for flow audit persistence.
      * Wrapped in ObjectProvider so this always-on bean does not hard-depend on the BFIA datasource.
@@ -122,29 +133,21 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
     @Override
     public StartGraphVO startGraph(StartGraphRequest request) {
         try {
+            if (!protocolConfigService.isActive("bfia")) {
+                throw new IllegalStateException("BFIA protocol is not active on this node");
+            }
+            lifecycle.requireExecutable(request.getProjectId(), request.getGraphId());
             // 从 bfia_graph 读取图节点（不再依赖标准 project_graph 表）
             BfiaGraphDO graphDO = bfiaGraphService.getGraphDO(request.getProjectId(), request.getGraphId());
             if (graphDO == null || CollectionUtils.isEmpty(graphDO.getNodes())) {
                 throw new IllegalStateException("BFIA flow graph is empty or not found");
             }
 
-            // 自动填充 nodes（如果请求中没有指定节点列表）
-            if (CollectionUtils.isEmpty(request.getNodes())) {
-                List<String> allNodeIds = new ArrayList<>();
-                for (BfiaGraphNodeDO node : graphDO.getNodes()) {
-                    allNodeIds.add(node.getUpk().getGraphNodeId());
-                }
-                request.setNodes(allNodeIds);
-            }
-
-            // 手动构建 ProjectJob（不再调用 GraphServiceImpl.buildProjectJob）
-            String jobId = UUIDUtils.random(4);
-            List<ProjectJob.JobTask> tasks = new ArrayList<>();
+            // 还原完整画布图；planner 会自动补齐选中节点的上游依赖、折叠数据选择
+            // 节点，并按拓扑顺序返回真正需要提交给 Kuscia 的 BFIA 算法节点。
+            List<GraphNodeInfo> graphNodeInfos = new ArrayList<>();
             for (BfiaGraphNodeDO nodeDO : graphDO.getNodes()) {
                 String graphNodeId = nodeDO.getUpk().getGraphNodeId();
-                if (!request.getNodes().contains(graphNodeId)) {
-                    continue;
-                }
                 // 将 BfiaGraphNodeDO 的 params JSON 反序列化为 GraphNodeInfo，
                 // 再提取其中真正的 nodeDef（画布算法参数），避免把 GraphNodeInfo 外壳当成 nodeDef。
                 GraphNodeInfo storedInfo = null;
@@ -163,8 +166,17 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
                         .inputs(storedInfo != null && storedInfo.getInputs() != null ? storedInfo.getInputs() : new ArrayList<>())
                         .outputs(storedInfo != null && storedInfo.getOutputs() != null ? storedInfo.getOutputs() : new ArrayList<>())
                         .build();
+                graphNodeInfos.add(nodeInfo);
+            }
+
+            List<GraphNodeInfo> executableNodes = executionPlanner.plan(graphNodeInfos, request.getNodes());
+
+            // 手动构建 ProjectJob（不再调用 GraphServiceImpl.buildProjectJob）
+            String jobId = UUIDUtils.random(4);
+            List<ProjectJob.JobTask> tasks = new ArrayList<>();
+            for (GraphNodeInfo nodeInfo : executableNodes) {
                 ProjectJob.JobTask task = ProjectJob.JobTask.builder()
-                        .taskId(JobUtils.genTaskId(jobId, graphNodeId))
+                        .taskId(JobUtils.genTaskId(jobId, nodeInfo.getGraphNodeId()))
                         .parties(new ArrayList<>())
                         .node(nodeInfo)
                         .build();
@@ -235,21 +247,19 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
         } catch (Exception e) {
             log.warn("BFIA ensureParties: failed to query project nodes", e);
         }
-        // 2) Fall back to lite/autonomy node directory.
-        if (domainIds.isEmpty()) {
-            try {
-                List<NodeDO> liteNodes = nodeRepository.findByModeIn(List.of(1));
-                for (NodeDO node : liteNodes) {
-                    if (node.getNodeId() != null && !domainIds.contains(node.getNodeId())) {
-                        domainIds.add(node.getNodeId());
-                    }
+        // 2) Complete the configured pair from the lite/autonomy node directory.
+        try {
+            List<NodeDO> liteNodes = nodeRepository.findByModeIn(List.of(1));
+            for (NodeDO node : liteNodes) {
+                if (node.getNodeId() != null && !domainIds.contains(node.getNodeId())) {
+                    domainIds.add(node.getNodeId());
                 }
-            } catch (Exception e) {
-                log.warn("BFIA ensureParties: failed to query lite nodes from nodeRepository", e);
             }
+        } catch (Exception e) {
+            log.warn("BFIA ensureParties: failed to query lite nodes from nodeRepository", e);
         }
-        // 3) Last resort: dynamic kuscia gRPC config.
-        if (domainIds.isEmpty() && dynamicKusciaGrpcConfig.getNodes() != null) {
+        // 3) Complete it from dynamic kuscia gRPC config as a last source.
+        if (dynamicKusciaGrpcConfig.getNodes() != null) {
             for (KusciaGrpcConfig node : dynamicKusciaGrpcConfig.getNodes()) {
                 if (node.getDomainId() != null && !domainIds.contains(node.getDomainId())) {
                     domainIds.add(node.getDomainId());
@@ -257,12 +267,24 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
             }
         }
         if (domainIds.isEmpty()) {
-            return;
+            throw new IllegalStateException("No BFIA execution nodes are registered");
         }
-        log.info("BFIA parties fallback: using node IDs {}", domainIds);
+        List<String> selectedDomainIds = new ArrayList<>();
+        if (domainIds.contains(localNodeId)) {
+            selectedDomainIds.add(localNodeId);
+        }
+        if (domainIds.contains(bfiaPeerNodeId) && !selectedDomainIds.contains(bfiaPeerNodeId)) {
+            selectedDomainIds.add(bfiaPeerNodeId);
+        }
+        if (selectedDomainIds.size() != 2) {
+            throw new IllegalStateException(
+                    "BFIA execution requires the configured node pair " + localNodeId + " <-> "
+                            + bfiaPeerNodeId + ", available nodes: " + domainIds);
+        }
+        log.info("BFIA parties fallback: using configured node pair {}", selectedDomainIds);
         for (ProjectJob.JobTask task : job.getTasks()) {
             if (CollectionUtils.isEmpty(task.getParties())) {
-                task.setParties(domainIds);
+                task.setParties(selectedDomainIds);
             }
         }
     }
@@ -284,18 +306,15 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
             }
             @SuppressWarnings("unchecked")
             Map<String, Object> nodeDef = (Map<String, Object>) node.getNodeDef();
-            List<String> datasetIds = new ArrayList<>();
-            if (nodeDef.get("host_dataset_id") instanceof String hostId && StringUtils.isNotBlank(hostId)) {
-                datasetIds.add(hostId);
-            }
-            if (nodeDef.get("guest_dataset_id") instanceof String guestId && StringUtils.isNotBlank(guestId)) {
-                datasetIds.add(guestId);
-            }
-            for (String datasetId : datasetIds) {
-                if (!datasetRepository.existsById(datasetId)) {
-                    throw new IllegalArgumentException(
-                            "BFIA node " + node.getGraphNodeId() + " references unknown dataset: " + datasetId);
-                }
+            // The host dataset belongs to this SecretPad and must exist locally. The guest
+            // dataset belongs to Bob and is resolved through BfiaInterconnClient during
+            // conversion; rejecting it against Alice's local repository breaks real two-node jobs.
+            if (nodeDef.get("host_dataset_id") instanceof String hostId
+                    && StringUtils.isNotBlank(hostId)
+                    && !datasetRepository.existsById(hostId)) {
+                throw new IllegalArgumentException(
+                        "BFIA node " + node.getGraphNodeId()
+                                + " references unknown host dataset: " + hostId);
             }
         }
     }
@@ -651,6 +670,7 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
             }
         }
         GraphNodeOutputVO.FileMeta meta = GraphNodeOutputVO.FileMeta.builder()
+                .format("csv-records")
                 .headers(headers)
                 .rows(rows)
                 .build();
@@ -793,7 +813,7 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
 
     /**
      * Map a graph node id to the BFIA component alias used in the kuscia job spec.
-     * The alias equals the normalized component code name (see {@link BfiaJobConverter}).
+     * The alias includes the graph node id so repeated uses of one algorithm remain unique.
      */
     private String graphNodeToAlias(BfiaGraphDO graphDO, String graphNodeId) {
         if (graphDO == null || graphDO.getNodes() == null || graphNodeId == null) {
@@ -801,26 +821,10 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
         }
         for (BfiaGraphNodeDO node : graphDO.getNodes()) {
             if (graphNodeId.equals(node.getUpk().getGraphNodeId())) {
-                return normalizeComponentName(node.getNodeDefId());
+                return BfiaJobConverter.componentAlias(node.getNodeDefId(), graphNodeId);
             }
         }
         return null;
-    }
-
-    private String normalizeComponentName(String codeName) {
-        if (codeName == null) {
-            return "";
-        }
-        String name = codeName;
-        int slash = name.lastIndexOf('/');
-        if (slash >= 0) {
-            name = name.substring(slash + 1);
-        }
-        int colon = name.indexOf(':');
-        if (colon >= 0) {
-            name = name.substring(0, colon);
-        }
-        return name.trim().toLowerCase().replace('_', '-');
     }
 
     /**

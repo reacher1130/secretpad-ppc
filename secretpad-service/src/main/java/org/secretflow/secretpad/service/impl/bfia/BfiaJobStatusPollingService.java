@@ -16,10 +16,9 @@
 
 package org.secretflow.secretpad.service.impl.bfia;
 
-import org.secretflow.secretpad.persistence.entity.bfia.BfiaJobDO;
 import org.secretflow.secretpad.persistence.repository.bfia.BfiaJobRepository;
 import org.secretflow.secretpad.service.bfia.BfiaFlowService;
-import org.secretflow.secretpad.service.configuration.ProtocolConfigurationProperties;
+import org.secretflow.secretpad.service.protocol.ProtocolConfigService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,29 +47,24 @@ public class BfiaJobStatusPollingService {
 
     private final BfiaJobRepository bfiaJobRepository;
     private final BfiaFlowService bfiaFlowService;
-    private final ProtocolConfigurationProperties protocolProperties;
+    private final ProtocolConfigService protocolConfigService;
 
     @Scheduled(fixedDelay = 5000)
     public void poll() {
         // Protocol isolation: only poll BFIA jobs when the node is running in BFIA mode.
-        String defaultProtocol = protocolProperties.getDefaultProtocol();
-        if (!StringUtils.equalsIgnoreCase(StringUtils.defaultString(defaultProtocol), "bfia")) {
+        if (!protocolConfigService.isActive("bfia")) {
             return;
         }
 
-        List<BfiaJobDO> jobs = bfiaJobRepository.findAll();
-        for (BfiaJobDO job : jobs) {
-            if (job == null || StringUtils.isBlank(job.getJobId())) {
-                continue;
-            }
-            String status = StringUtils.defaultString(job.getStatus()).toUpperCase();
-            if ("SUCCESS".equals(status) || "FAILED".equals(status)) {
+        List<String> jobIds = bfiaJobRepository.findUnfinishedJobIds();
+        for (String jobId : jobIds) {
+            if (StringUtils.isBlank(jobId)) {
                 continue;
             }
             try {
-                bfiaFlowService.syncJobStatus(job.getJobId());
+                bfiaFlowService.syncJobStatus(jobId);
             } catch (Exception e) {
-                log.warn("BFIA job status polling failed: jobId={}", job.getJobId(), e);
+                log.warn("BFIA job status polling failed: jobId={}", jobId, e);
             }
         }
     }

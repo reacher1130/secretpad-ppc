@@ -1,0 +1,1 @@
+ALTER TABLE bfia_graph ADD COLUMN is_draft INT DEFAULT 0 NOT NULL;

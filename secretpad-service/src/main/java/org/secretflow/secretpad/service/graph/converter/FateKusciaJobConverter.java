@@ -25,9 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,12 +57,18 @@ public class FateKusciaJobConverter {
      * @return Kuscia create job request
      */
     public Job.CreateJobRequest convert(String jobId, FateJobRequest request, FateClusterDO cluster, String localNode) {
-        String initiator = resolveInitiator(request, localNode);
-        List<Job.Party> parties = buildParties(request.getConfig());
-        if (CollectionUtils.isEmpty(parties)) {
-            // Single-party fallback: run on the initiator node so local development still works.
-            parties = List.of(Job.Party.newBuilder().setDomainId(initiator).build());
+        // Only the local platform schedules an adapter. FATE party identifiers
+        // belong to the independent native FATE federation, never Kuscia domains.
+        if (StringUtils.isBlank(localNode)) {
+            throw new IllegalArgumentException("Local FATE adapter node is required");
         }
+        if (StringUtils.isNotBlank(request.getInitiatorNodeId())
+                && !localNode.equals(request.getInitiatorNodeId())) {
+            throw new IllegalArgumentException("FATE adapter must be initiated on the local platform");
+        }
+        validateNativeParties(request.getConfig());
+        String initiator = localNode;
+        List<Job.Party> parties = List.of(Job.Party.newBuilder().setDomainId(localNode).build());
 
         String taskInputConfig = buildTaskInputConfig(jobId, request, cluster.getFlowAddress());
         String taskId = TASK_ID_PREFIX + jobId;
@@ -85,60 +89,35 @@ public class FateKusciaJobConverter {
                 .build();
     }
 
-    @SuppressWarnings("unchecked")
-    private String resolveInitiator(FateJobRequest request, String localNode) {
-        Map<String, Object> config = request.getConfig();
-        if (config != null) {
-            Object initiatorObj = config.get("initiator");
-            if (initiatorObj instanceof Map<?, ?> initiatorMap) {
-                Object nodeId = initiatorMap.get("node_id");
-                if (nodeId != null && StringUtils.isNotBlank(String.valueOf(nodeId))) {
-                    return String.valueOf(nodeId);
+    private void validateNativeParties(Map<String, Object> config) {
+        if (config == null || !(config.get("role") instanceof Map<?, ?> roles)) {
+            throw new IllegalArgumentException("FATE native party roles are required");
+        }
+        for (String role : List.of("guest", "host")) {
+            if (!(roles.get(role) instanceof List<?> ids) || ids.isEmpty()) {
+                throw new IllegalArgumentException("FATE native " + role + " party is required");
+            }
+        }
+        for (Object value : roles.values()) {
+            if (!(value instanceof List<?> ids)) {
+                throw new IllegalArgumentException("FATE role must contain a list of native party IDs");
+            }
+            for (Object id : ids) {
+                String party = id == null ? "" : id.toString().trim();
+                if (party.isEmpty() || List.of("alice", "bob", "kimi").contains(party.toLowerCase(java.util.Locale.ROOT))) {
+                    throw new IllegalArgumentException("Use native FATE party IDs; Alice/Bob/Kimi are platform domains");
                 }
             }
         }
-        if (StringUtils.isNotBlank(request.getInitiatorNodeId())) {
-            return request.getInitiatorNodeId();
-        }
-        return localNode;
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<Job.Party> buildParties(Map<String, Object> config) {
-        List<Job.Party> parties = new ArrayList<>();
-        if (config == null) {
-            return parties;
-        }
-        Object roleObj = config.get("role");
-        if (!(roleObj instanceof Map<?, ?> roleMap)) {
-            return parties;
-        }
-        for (Map.Entry<?, ?> entry : roleMap.entrySet()) {
-            String role = String.valueOf(entry.getKey());
-            Object value = entry.getValue();
-            if (!(value instanceof List<?> domainIds)) {
-                continue;
-            }
-            for (Object domainIdObj : domainIds) {
-                String domainId = String.valueOf(domainIdObj);
-                if (StringUtils.isBlank(domainId)) {
-                    continue;
-                }
-                parties.add(Job.Party.newBuilder()
-                        .setDomainId(domainId)
-                        .setRole(role)
-                        .build());
-            }
-        }
-        return parties;
     }
 
     private String buildTaskInputConfig(String jobId, FateJobRequest request, String flowAddress) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("job_id", jobId);
-        if (StringUtils.isNotBlank(request.getGraphId())) {
-            body.put("flow_id", request.getGraphId());
-        }
+        // FATE 2.x requires flow_id and old_job_id even for a fresh graph.
+        // Use the generated local job id as a stable flow id fallback.
+        body.put("flow_id", StringUtils.defaultIfBlank(request.getGraphId(), jobId));
+        body.put("old_job_id", "");
         body.put("dag", request.getDag());
         body.put("config", request.getConfig());
         body.put("fate_flow_address", flowAddress);

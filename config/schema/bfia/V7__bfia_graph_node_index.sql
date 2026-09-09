@@ -1,0 +1,1 @@
+ALTER TABLE bfia_graph ADD COLUMN node_max_index INT DEFAULT 32 NOT NULL;

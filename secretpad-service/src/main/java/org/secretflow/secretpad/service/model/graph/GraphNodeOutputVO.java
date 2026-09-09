@@ -107,6 +107,8 @@ public class GraphNodeOutputVO {
     @Data
     @Builder
     public static class FileMeta {
+        /** Explicit payload format; absent for native DomainData metadata. */
+        private String format;
         /**
          * Graph node output file headers
          */

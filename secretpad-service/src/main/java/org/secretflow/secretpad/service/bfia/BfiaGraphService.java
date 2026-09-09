@@ -44,4 +44,6 @@ public interface BfiaGraphService {
     void updateGraphNode(UpdateGraphNodeRequest request);
 
     BfiaGraphDO getGraphDO(String projectId, String graphId);
+
+    GraphNodeMaxIndexRefreshVO refreshNodeMaxIndex(GraphNodeMaxIndexRefreshRequest request);
 }

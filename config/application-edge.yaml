@@ -6,7 +6,9 @@ secretpad:
   platform-type: EDGE
   node-id: ${NODE_ID}
   auth:
-    enabled: true
+    # Demo deployments are unauthenticated by default. Set
+    # SECRETPAD_AUTH_ENABLED=true for a production/authenticated deployment.
+    enabled: ${SECRETPAD_AUTH_ENABLED:false}
   datasync:
     center: true
     p2p: false
@@ -110,5 +112,4 @@ edge:
     - /api/v1alpha1/component/list
     - /api/v1alpha1/component/batch
     - /api/v1alpha1/version/list
-
 

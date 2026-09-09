@@ -133,7 +133,7 @@ public class FateClusterServiceImpl implements FateClusterService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<FateClusterVO> list(String nodeId) {
         List<FateClusterDO> entities;
         if (StringUtils.isBlank(nodeId)) {
@@ -141,7 +141,17 @@ public class FateClusterServiceImpl implements FateClusterService {
         } else {
             entities = fateClusterRepository.findByNodeId(nodeId);
         }
-        return entities.stream().map(this::toVO).collect(Collectors.toList());
+        // Refresh the displayed status on every list request. A cluster can be
+        // registered while FATE-Flow is still starting, and a persisted
+        // UNKNOWN value otherwise remains stale forever in the UI.
+        return entities.stream().map(entity -> {
+            String status = probeStatus(entity.getFlowAddress());
+            if (!StringUtils.equals(status, entity.getStatus())) {
+                entity.setStatus(status);
+                entity = fateClusterRepository.save(entity);
+            }
+            return toVO(entity);
+        }).collect(Collectors.toList());
     }
 
     private void validate(FateClusterRequest request) {
@@ -174,11 +184,10 @@ public class FateClusterServiceImpl implements FateClusterService {
     }
 
     /**
-     * Best-effort status probe. Returns ACTIVE if FATE-Flow responds to a status
-     * query with a non-empty body, otherwise UNKNOWN.
+     * Best-effort status probe. Returns ACTIVE only for a native FATE site with a party identity.
      */
     private String probeStatus(String flowAddress) {
-        return fateFlowClient.checkConnection(flowAddress) ? "ACTIVE" : "UNKNOWN";
+        return fateFlowClient.checkNativeConnection(flowAddress) ? "ACTIVE" : "UNKNOWN";
     }
 
     private FateClusterVO toVO(FateClusterDO entity) {

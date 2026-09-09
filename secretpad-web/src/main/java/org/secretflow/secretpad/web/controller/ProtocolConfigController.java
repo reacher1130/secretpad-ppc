@@ -43,8 +43,7 @@ public class ProtocolConfigController {
     }
 
     @PostMapping("/node/kuscia/restart")
-    public SecretPadResponse<Boolean> restartKuscia(@RequestBody KusciaRestartRequest request) {
-        kusciaProtocolSwitchService.restartKuscia(request.getProtocol());
-        return SecretPadResponse.success(Boolean.TRUE);
+    public SecretPadResponse<ProtocolConfigVO> restartKuscia(@RequestBody KusciaRestartRequest request) {
+        return SecretPadResponse.success(kusciaProtocolSwitchService.restartKuscia(request.getProtocol()));
     }
 }

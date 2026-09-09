@@ -1,0 +1,29 @@
+spring:
+  config:
+    activate:
+      on-profile: bfia-bob
+
+# Bob 是独立 autonomy 节点。这里只注册 Bob 自身的 Kuscia gRPC 通道；
+# Alice/Bob 的 BFIA 任务控制与结果同步走 8084 互联接口，避免把 Bob
+# 同时注册为 master 和 lite 后由后一个配置覆盖自身通道。
+secretpad:
+  data:
+    # Bob runs as a local JVM in the demo; keep uploads in the project tree
+    # instead of the container-only /app/data path.
+    dir-path: ${HOST_PATH:./data_bfia/}
+  bfia:
+    input:
+      storage-type: ${SECRETPAD_BFIA_INPUT_STORAGE_TYPE:}
+      base-path: ${SECRETPAD_BFIA_INPUT_BASE_PATH:}
+      docker-container: ${SECRETPAD_BFIA_INPUT_DOCKER_CONTAINER:}
+kuscia:
+  nodes:
+    - domainId: ${NODE_ID:bob}
+      mode: p2p
+      host: ${KUSCIA_API_ADDRESS:127.0.0.1}
+      port: ${KUSCIA_API_PORT:28083}
+      http-port: ${KUSCIA_BFIA_HTTP_PORT:8084}
+      protocol: ${KUSCIA_PROTOCOL:tls}
+      cert-file: file:./config/certs/bob-local/client.crt
+      key-file: file:./config/certs/bob-local/client.pem
+      token: config/certs/bob-local/token

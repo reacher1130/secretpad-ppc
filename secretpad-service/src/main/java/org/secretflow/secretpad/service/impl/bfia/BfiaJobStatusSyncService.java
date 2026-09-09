@@ -24,7 +24,7 @@ import org.secretflow.secretpad.persistence.repository.ProjectJobRepository;
 import org.secretflow.secretpad.persistence.repository.ProjectJobTaskRepository;
 import org.secretflow.secretpad.manager.integration.job.JobManager;
 import org.secretflow.secretpad.service.bfia.BfiaInterconnClient;
-import org.secretflow.secretpad.service.configuration.ProtocolConfigurationProperties;
+import org.secretflow.secretpad.service.protocol.ProtocolConfigService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -61,7 +61,7 @@ public class BfiaJobStatusSyncService {
     private final ObjectProvider<ProjectJobRepository> jobRepoProvider;
     private final ObjectProvider<ProjectJobTaskRepository> taskRepoProvider;
     private final BfiaInterconnClient bfiaInterconnClient;
-    private final ProtocolConfigurationProperties protocolProperties;
+    private final ProtocolConfigService protocolConfigService;
     /**
      * Prototype-scoped job manager used to sync task results (DomainData → project_result)
      * when a BFIA task transitions to SUCCEED. Wrapped in ObjectProvider because the
@@ -77,8 +77,7 @@ public class BfiaJobStatusSyncService {
     @Scheduled(fixedDelay = 5000)
     public void syncBfiaJobStatus() {
         // Protocol isolation: only poll BFIA jobs when the node is running in BFIA mode.
-        String defaultProtocol = protocolProperties.getDefaultProtocol();
-        if (!StringUtils.hasText(defaultProtocol) || !"bfia".equalsIgnoreCase(defaultProtocol.trim())) {
+        if (!protocolConfigService.isActive("bfia")) {
             return;
         }
 

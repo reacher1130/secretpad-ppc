@@ -44,8 +44,8 @@ public class RestTemplateUtil {
     }
 
     public static ResponseEntity<String> sendPostJson(String url, Object objReq, Map<String, String> headMap) {
-        log.info("RestTemplateUtils.sendPostJson request: url={}, reqObj={}, headMap={}.", url, JsonUtils.toJSONString(objReq),
-                JsonUtils.toJSONString(headMap));
+        // Payload serialization is needed for transport only, not for every INFO log.
+        log.debug("HTTP POST {}", url);
         HttpHeaders httpHeaders = new HttpHeaders();
         httpHeaders.setContentType(MediaType.APPLICATION_JSON);
         if (null != headMap) {
@@ -55,7 +55,7 @@ public class RestTemplateUtil {
         }
         HttpEntity<String> httpEntity = new HttpEntity<>(JsonUtils.toJSONString(objReq), httpHeaders);
         ResponseEntity<String> tResponseEntity = REST_TEMPLATE.postForEntity(url, httpEntity, String.class);
-        log.info("RestTemplateUtils.sendPostJson result: {}", tResponseEntity);
+        log.debug("HTTP POST {} returned {}", url, tResponseEntity.getStatusCode());
         return tResponseEntity;
     }
 

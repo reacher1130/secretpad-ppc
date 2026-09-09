@@ -346,7 +346,8 @@ public class KusciaGrpcClientAdapter implements
 
     @Override
     public Job.CreateJobResponse createJob(Job.CreateJobRequest request) {
-        return dynamicKusciaChannelProvider.currentStub(JobServiceGrpc.JobServiceBlockingStub.class).createJob(request);
+        return dynamicKusciaChannelProvider.currentStub(JobServiceGrpc.JobServiceBlockingStub.class)
+                .withDeadlineAfter(60, java.util.concurrent.TimeUnit.SECONDS).createJob(request);
     }
 
     @Override
@@ -396,7 +397,8 @@ public class KusciaGrpcClientAdapter implements
 
     @Override
     public Job.CreateJobResponse createJob(Job.CreateJobRequest request, String domainId) {
-        return dynamicKusciaChannelProvider.createStub(domainId, JobServiceGrpc.JobServiceBlockingStub.class).createJob(request);
+        return dynamicKusciaChannelProvider.createStub(domainId, JobServiceGrpc.JobServiceBlockingStub.class)
+                .withDeadlineAfter(60, java.util.concurrent.TimeUnit.SECONDS).createJob(request);
     }
 
     @Override

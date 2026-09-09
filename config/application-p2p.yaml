@@ -11,10 +11,18 @@ secretpad:
   p2p-platform-service: secretpad
   inst-name: ${INST_NAME} #  input at install.sh
   auth:
-    enabled: true
+    # Demo deployments are unauthenticated by default. Set
+    # SECRETPAD_AUTH_ENABLED=true for a production/authenticated deployment.
+    enabled: ${SECRETPAD_AUTH_ENABLED:false}
   data:
     host-path: ${HOST_PATH}
-    dir-path: /app/data/
+    # 本地演示进程直接使用 HOST_PATH；容器部署时仍可传入 /app/data/。
+    dir-path: ${HOST_PATH:/app/data/}
+  bfia:
+    input:
+      storage-type: ${SECRETPAD_BFIA_INPUT_STORAGE_TYPE:}
+      base-path: ${SECRETPAD_BFIA_INPUT_BASE_PATH:}
+      docker-container: ${SECRETPAD_BFIA_INPUT_DOCKER_CONTAINER:}
   certs:
     dir-path: /app/config/certs/
 
@@ -46,6 +54,11 @@ secretpad:
   protocol:
     default-protocol: ${SECRETPAD_PROTOCOL_DEFAULT:secretflow}
     can-switch: ${SECRETPAD_PROTOCOL_CAN_SWITCH:true}
+    state-file: ${SECRETPAD_PROTOCOL_STATE_FILE:./data/active-protocol}
+    fate-flow-address: ${FATE_FLOW_ADDRESS:http://127.0.0.1:19381}
+    paddledtx-requester-command: ${PADDLEDTX_REQUESTER_COMMAND:}
+    paddledtx-requester-config: ${PADDLEDTX_REQUESTER_CONFIG:}
+    paddledtx-health-address: ${PADDLEDTX_HEALTH_ADDRESS:http://127.0.0.1:8511/v1/task/list}
   component:
     hide:
       - secretflow/io/read_data:1.0.0

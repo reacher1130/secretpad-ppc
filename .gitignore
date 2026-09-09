@@ -89,3 +89,7 @@ docs/_build
 /data/
 /data_bfia/
 /data_secretflow/
+
+# Deployment identity and mutable protocol state stay outside source control.
+/config/sync/
+/protocol.state

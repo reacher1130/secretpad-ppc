@@ -45,7 +45,7 @@ public class TokenAuthClientInterceptor implements ClientInterceptor {
             @Override
             public void start(Listener<RespT> responseListener, Metadata headers) {
                 headers.put(Metadata.Key.of(KusciaAPIConstants.TOKEN_HEADER, Metadata.ASCII_STRING_MARSHALLER), token);
-                log.info("[{}] add token header: {} {}", domainId, KusciaAPIConstants.TOKEN_HEADER, token);
+                log.debug("[{}] add authentication header: {}", domainId, KusciaAPIConstants.TOKEN_HEADER);
                 super.start(responseListener, headers);
             }
         };

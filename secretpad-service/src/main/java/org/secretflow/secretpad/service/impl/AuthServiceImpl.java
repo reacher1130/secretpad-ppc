@@ -94,7 +94,6 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional(rollbackFor = Exception.class, noRollbackFor = SecretpadException.class)
     public UserContextDTO login(String name, String passwordHash) {
-        System.out.println("DEBUG login name=" + name + ", passwordHash=" + passwordHash);
         //check password and lock
         AccountsDO user = accountLockedCheck(name, passwordHash);
         String token = UUIDUtils.newUUID();

@@ -31,6 +31,11 @@ import java.util.List;
  */
 @Repository
 public interface BfiaGraphRepository extends BaseRepository<BfiaGraphDO, BfiaGraphDO.UPK> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("from BfiaGraphDO g where g.upk.projectId = :projectId and g.upk.graphId = :graphId")
+    java.util.Optional<BfiaGraphDO> findForIndexUpdate(@Param("projectId") String projectId,
+                                                     @Param("graphId") String graphId);
+
     @Query("from BfiaGraphDO g where g.upk.projectId = :projectId")
     List<BfiaGraphDO> findByProjectId(@Param("projectId") String projectId);
 }
