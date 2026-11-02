@@ -1,6 +1,7 @@
 package org.secretflow.secretpad.service.paddledtx;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,8 +18,11 @@ import java.nio.file.Path;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -45,6 +49,7 @@ public class PaddleDtxClient {
             "(?im)^TaskID:\\h*(" + UUID_PATTERN + ")\\h*$");
     private static final Set<String> TASK_STATES = Set.of("Publishing", "Confirming", "Ready", "ToProcess",
             "Processing", "Finished", "Failed", "Rejected");
+    private static final Pattern STORAGE_NODE_ID = Pattern.compile("[0-9a-fA-F]{128}");
 
     private final ProtocolConfigurationProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -86,9 +91,102 @@ public class PaddleDtxClient {
         }
         result.put("executors", executors);
         result.put("httpStatus", executors.get(0).get("httpStatus"));
+        List<String> errors = new ArrayList<>();
+        if (!ready) errors.add("请求端未配置，或执行器链上查询不可用，请查看各节点状态");
+        String storageType = properties.getPaddledtxModelStorageType();
+        result.put("modelStorageType", storageType);
+        List<Map<String, Object>> storage = new ArrayList<>();
+        boolean storageReady = "Local".equals(storageType);
+        if ("XuperDB".equals(storageType)) {
+            storageReady = true;
+            for (String address : new String[]{properties.getPaddledtxStorageHealthAddress(),
+                    properties.getPaddledtxPeerStorageHealthAddress()}) {
+                Map<String, Object> probe = storageReadiness(address);
+                storage.add(probe);
+                if (!Boolean.TRUE.equals(probe.get("ready"))) {
+                    storageReady = false;
+                    String error = String.valueOf(probe.get("error"));
+                    if (!errors.contains(error)) errors.add(error);
+                }
+            }
+        } else if (!storageReady) {
+            errors.add("模型存储类型不受支持，仅允许 XuperDB 或 Local");
+        }
+        result.put("storage", storage);
+        result.put("storageReady", storageReady);
+        ready &= storageReady;
         result.put("ready", ready);
-        if (!ready) result.put("error", "请求端未配置，或执行器/链上查询不可用，请查看各节点状态");
+        if (!ready) result.put("error", String.join("；", errors));
         return result;
+    }
+
+    private Map<String, Object> storageReadiness(String address) {
+        Map<String, Object> probe = new LinkedHashMap<>();
+        probe.put("address", address);
+        probe.put("namespace", "");
+        probe.put("replica", 0);
+        probe.put("eligibleNodes", 0);
+        probe.put("totalNodes", 0);
+        probe.put("ready", false);
+        try {
+            URI namespaceAddress = URI.create(address);
+            JsonNode namespace = storageData(namespaceAddress).path("namespace");
+            if (!namespace.isObject() || !namespace.path("name").isTextual()
+                    || namespace.path("name").asText().isBlank() || !namespace.path("replica").isIntegralNumber()
+                    || !namespace.path("replica").canConvertToInt() || namespace.path("replica").asInt() < 1) {
+                throw new IllegalStateException("模型存储返回的命名空间信息无效");
+            }
+            int replica = namespace.path("replica").asInt();
+            probe.put("namespace", namespace.path("name").asText());
+            probe.put("replica", replica);
+            JsonNode nodes = storageData(namespaceAddress.resolve("/v1/node/list"));
+            if (!nodes.isArray()) throw new IllegalStateException("模型存储返回的节点列表无效");
+            probe.put("totalNodes", nodes.size());
+            int eligible = 0;
+            Set<String> identities = new HashSet<>();
+            for (JsonNode node : nodes) {
+                if (!node.isObject() || !node.path("id").isTextual() || !node.path("online").isBoolean()) {
+                    throw new IllegalStateException("模型存储返回的节点信息无效");
+                }
+                String id = new String(Base64.getDecoder().decode(node.path("id").asText()), StandardCharsets.US_ASCII);
+                if (!STORAGE_NODE_ID.matcher(id).matches() || !identities.add(id.toLowerCase(Locale.ROOT))) {
+                    throw new IllegalStateException("模型存储返回的节点身份无效或重复");
+                }
+                if (!node.path("online").asBoolean()) continue;
+                JsonNode health = storageData(namespaceAddress.resolve("/v1/node/health?id=" + id));
+                if (!health.isTextual() || !Set.of("Green", "Yellow", "Red").contains(health.asText())) {
+                    throw new IllegalStateException("模型存储返回的节点健康状态无效");
+                }
+                if (!"Red".equals(health.asText())) eligible++;
+            }
+            probe.put("eligibleNodes", eligible);
+            boolean ready = eligible >= replica;
+            probe.put("ready", ready);
+            if (!ready) probe.put("error", "模型存储暂不可写：命名空间 " + namespace.path("name").asText()
+                    + " 需要 " + replica + " 个在线健康节点，当前 " + eligible + " 个，请等待节点健康恢复");
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            probe.put("error", "无法确认模型存储可写状态：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+        return probe;
+    }
+
+    private JsonNode storageData(URI address) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(address).timeout(Duration.ofSeconds(5)).GET().build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        JsonNode envelope = objectMapper.readTree(response.body());
+        if (response.statusCode() != 200 || envelope == null || !envelope.isObject()
+                || !"0".equals(envelope.path("code").asText())) {
+            throw new IllegalStateException("存储查询失败（HTTP " + response.statusCode() + "，业务状态无效）");
+        }
+        return envelope.path("data");
+    }
+
+    private void requireReady() {
+        Map<String, Object> status = readiness();
+        if (!Boolean.TRUE.equals(status.get("ready"))) {
+            throw new IllegalStateException(String.valueOf(status.get("error")));
+        }
     }
 
     public boolean isReady() {
@@ -102,6 +200,7 @@ public class PaddleDtxClient {
             throw new IllegalArgumentException("predict requires modelTaskId");
         }
         if ("predict".equals(type)) requireTaskId(String.valueOf(request.get("modelTaskId")));
+        requireReady();
         List<String> args = new ArrayList<>();
         args.add("task");
         args.add("publish");
@@ -165,6 +264,12 @@ public class PaddleDtxClient {
         }
         Map<?, ?> task = (Map<?, ?>) result.get("task");
         if (!"Ready".equals(task.get("status"))) return result;
+        try {
+            requireReady();
+        } catch (IllegalStateException e) {
+            result.put("error", e.getMessage());
+            return result;
+        }
         try {
             Map<String, Object> start = runCli(List.of("task", "start", "--id", id), 30);
             result.put("start", start);

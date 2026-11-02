@@ -126,9 +126,10 @@ public class KusciaProtocolSwitchService {
     }
 
     private void ensurePaddleDtxReady() {
-        if (!paddleDtxClient.isReady()) {
-            throw new IllegalStateException("PaddleDTX requester or one of the executor chain queries is unavailable");
+        var readiness = paddleDtxClient.readiness();
+        if (!Boolean.TRUE.equals(readiness.get("ready"))) {
+            throw new IllegalStateException(String.valueOf(readiness.get("error")));
         }
-        log.info("PaddleDTX both executor chain queries passed");
+        log.info("PaddleDTX executor and model storage readiness checks passed");
     }
 }

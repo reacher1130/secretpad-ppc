@@ -232,6 +232,9 @@ secretpad:
     paddledtx-requester-config: ${PADDLEDTX_REQUESTER_CONFIG:}
     paddledtx-peer-health-address: ${PADDLEDTX_PEER_HEALTH_ADDRESS:http://127.0.0.1:8512/v1/task/list}
     paddledtx-health-address: ${PADDLEDTX_HEALTH_ADDRESS:http://127.0.0.1:8511/v1/task/list}
+    paddledtx-model-storage-type: ${PADDLEDTX_MODEL_STORAGE_TYPE:XuperDB}
+    paddledtx-storage-health-address: ${PADDLEDTX_STORAGE_HEALTH_ADDRESS:http://127.0.0.1:8441/v1/file/getns?name=paddlempc}
+    paddledtx-peer-storage-health-address: ${PADDLEDTX_PEER_STORAGE_HEALTH_ADDRESS:http://127.0.0.1:8442/v1/file/getns?name=paddlempc}
 
   component:
     hide:

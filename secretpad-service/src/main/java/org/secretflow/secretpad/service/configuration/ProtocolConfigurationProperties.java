@@ -67,4 +67,7 @@ public class ProtocolConfigurationProperties {
      */
     private String paddledtxHealthAddress = "http://127.0.0.1:8511/v1/task/list";
     private String paddledtxPeerHealthAddress = "http://127.0.0.1:8512/v1/task/list";
+    private String paddledtxModelStorageType = "XuperDB";
+    private String paddledtxStorageHealthAddress = "http://127.0.0.1:8441/v1/file/getns?name=paddlempc";
+    private String paddledtxPeerStorageHealthAddress = "http://127.0.0.1:8442/v1/file/getns?name=paddlempc";
 }
