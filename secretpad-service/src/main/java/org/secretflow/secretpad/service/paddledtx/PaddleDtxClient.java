@@ -127,6 +127,7 @@ public class PaddleDtxClient {
         probe.put("replica", 0);
         probe.put("eligibleNodes", 0);
         probe.put("totalNodes", 0);
+        probe.put("checked", false);
         probe.put("ready", false);
         try {
             URI namespaceAddress = URI.create(address);
@@ -160,12 +161,14 @@ public class PaddleDtxClient {
                 if (!"Red".equals(health.asText())) eligible++;
             }
             probe.put("eligibleNodes", eligible);
+            probe.put("checked", true);
             boolean ready = eligible >= replica;
             probe.put("ready", ready);
             if (!ready) probe.put("error", "模型存储暂不可写：命名空间 " + namespace.path("name").asText()
                     + " 需要 " + replica + " 个在线健康节点，当前 " + eligible + " 个，请等待节点健康恢复");
         } catch (Exception e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            probe.put("checked", false);
             probe.put("error", "无法确认模型存储可写状态：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }
         return probe;

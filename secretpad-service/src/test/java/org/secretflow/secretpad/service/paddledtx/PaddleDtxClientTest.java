@@ -226,11 +226,13 @@ class PaddleDtxClientTest {
             assertEquals(true, ready.get("storageReady"));
             List<?> probes = (List<?>) ready.get("storage");
             assertEquals(2, probes.size());
+            for (Object probe : probes) assertEquals(true, ((Map<?, ?>) probe).get("checked"));
             assertEquals(2, ((Map<?, ?>) probes.get(0)).get("eligibleNodes"));
             assertEquals(2, ((Map<?, ?>) probes.get(0)).get("replica"));
             storage.peerNamespace = namespace(3);
             Map<String, Object> insufficient = client.readiness();
             assertEquals(false, insufficient.get("ready"));
+            for (Object probe : (List<?>) insufficient.get("storage")) assertEquals(true, ((Map<?, ?>) probe).get("checked"));
             assertTrue(String.valueOf(insufficient.get("error")).contains("需要 3"));
         }
     }
@@ -243,11 +245,13 @@ class PaddleDtxClientTest {
             Map<String, Object> result = client.readiness();
             Map<?, ?> probe = (Map<?, ?>) ((List<?>) result.get("storage")).get(0);
             assertEquals(false, result.get("ready"));
+            assertEquals(true, probe.get("checked"));
             assertEquals(1, probe.get("eligibleNodes"));
             assertEquals(3, probe.get("totalNodes"));
             storage.health.replaceAll((id, status) -> "Red");
             result = client.readiness();
             probe = (Map<?, ?>) ((List<?>) result.get("storage")).get(0);
+            assertEquals(true, probe.get("checked"));
             assertEquals(0, probe.get("eligibleNodes"));
             assertEquals(false, result.get("storageReady"));
         }
@@ -259,31 +263,38 @@ class PaddleDtxClientTest {
             for (String reply : List.of("{}", "{\"code\":7,\"data\":{}}", namespace(0),
                     "{\"code\":0,\"data\":{\"namespace\":{\"name\":\"paddlempc\",\"replica\":\"2\"}}}")) {
                 storage.namespace = reply;
-                assertFalse(client.isReady());
+                assertStorageUnchecked(client);
             }
             storage.namespace = namespace(2);
             storage.nodeReply = "{\"code\":0,\"data\":{}}";
-            assertFalse(client.isReady());
+            assertStorageUnchecked(client);
             storage.nodeReply = null;
             for (List<Map<String, Object>> nodes : List.of(
                     List.of(storageNode(StorageServer.FIRST, true), storageNode(StorageServer.FIRST, true)),
                     List.of(Map.<String, Object>of("id", "not-base64", "online", true)),
                     List.of(Map.<String, Object>of("id", Base64.getEncoder().encodeToString(StorageServer.FIRST.getBytes(StandardCharsets.US_ASCII)))))) {
                 storage.nodes = nodes;
-                assertFalse(client.isReady());
+                assertStorageUnchecked(client);
             }
             storage.nodes = List.of(storageNode(StorageServer.FIRST, true), storageNode(StorageServer.SECOND, true));
             storage.healthReply = "{\"code\":7,\"data\":\"Green\"}";
-            assertFalse(client.isReady(), "HTTP 200 cannot hide a failed storage health query");
+            assertStorageUnchecked(client);
             storage.healthReply = "{\"code\":0,\"data\":\"Unknown\"}";
-            assertFalse(client.isReady());
+            assertStorageUnchecked(client);
             storage.healthReply = null;
             storage.healthStatus = 503;
-            assertFalse(client.isReady());
+            assertStorageUnchecked(client);
             storage.healthStatus = 200;
             storage.properties.setPaddledtxStorageHealthAddress(null);
-            assertFalse(client.isReady());
+            assertStorageUnchecked(client);
         }
+    }
+
+    private void assertStorageUnchecked(PaddleDtxClient client) {
+        Map<String, Object> result = client.readiness();
+        assertEquals(false, result.get("ready"), "Invalid storage responses must keep the task gate closed");
+        Map<?, ?> probe = (Map<?, ?>) ((List<?>) result.get("storage")).get(0);
+        assertEquals(false, probe.get("checked"), "Failed storage queries must not become a healthy runtime wait");
     }
 
     @Test void explicitLocalStorageKeepsItsSemanticsAndUnknownModesAreRejected() throws Exception {
