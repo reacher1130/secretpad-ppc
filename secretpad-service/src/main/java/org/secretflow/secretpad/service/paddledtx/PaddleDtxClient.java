@@ -101,6 +101,7 @@ public class PaddleDtxClient {
         if ("predict".equals(type) && String.valueOf(request.getOrDefault("modelTaskId", "")).isBlank()) {
             throw new IllegalArgumentException("predict requires modelTaskId");
         }
+        if ("predict".equals(type)) requireTaskId(String.valueOf(request.get("modelTaskId")));
         List<String> args = new ArrayList<>();
         args.add("task");
         args.add("publish");

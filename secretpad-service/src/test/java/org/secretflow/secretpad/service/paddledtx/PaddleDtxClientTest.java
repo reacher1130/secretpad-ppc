@@ -63,6 +63,7 @@ class PaddleDtxClientTest {
         var props = new ProtocolConfigurationProperties();
         var client = new PaddleDtxClient(props);
         assertThrows(IllegalArgumentException.class, () -> client.submit(Map.of("type", "predict")));
+        assertThrows(IllegalArgumentException.class, () -> client.submit(Map.of("type", "predict", "modelTaskId", "invalid")));
         Path script = temp.resolve("failure.sh");
         Files.writeString(script, "#!/bin/sh\necho 'Publish task failed: rejected'\nexit 0\n");
         script.toFile().setExecutable(true);
