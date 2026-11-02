@@ -16,7 +16,6 @@
 
 package org.secretflow.secretpad.persistence.datasync;
 
-import org.secretflow.secretpad.common.dto.SecretPadResponse;
 import org.secretflow.secretpad.common.enums.PlatformTypeEnum;
 import org.secretflow.secretpad.persistence.datasync.buffer.p2p.P2PDataSyncDataBufferTemplate;
 import org.secretflow.secretpad.persistence.datasync.event.P2pDataSyncSendEvent;
@@ -91,10 +90,6 @@ public class DataSyncJobTest {
     void testDataSyncJobError() throws IOException {
         P2pDataSyncProducerTemplate.instId = "instId";
         P2pDataSyncProducerTemplate.nodeIds.add("alice");
-        SecretPadResponse<EntityChangeListener.DbChangeEvent<BaseAggregationRoot>> success = SecretPadResponse.success();
-        SecretPadResponse<EntityChangeListener.DbChangeEvent<BaseAggregationRoot>> error = new SecretPadResponse<>();
-        error.setStatus(SecretPadResponse.SecretPadResponseStatus.builder().code(500).build());
-        Mockito.when(p2pDataSyncRestService.sync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(success);
 
         DataSyncRestTemplate dataSyncRestTemplate = new P2pDataSyncRestTemplate();
         P2PDataSyncDataBufferTemplate dataSyncDataBufferTemplate = new P2PDataSyncDataBufferTemplate(applicationEventPublisher);
@@ -123,7 +118,6 @@ public class DataSyncJobTest {
          * case "ProjectScheduleTaskDO"
          */
         dataSyncDataBufferTemplate.push(buildProjectDO());
-        Mockito.when(p2pDataSyncRestService.sync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(error);
 
 
         DataSyncConfig dataSyncConfig = new DataSyncConfig();
@@ -181,10 +175,6 @@ public class DataSyncJobTest {
     void testDataSyncJob() throws IOException {
         P2pDataSyncProducerTemplate.instId = "instId";
         P2pDataSyncProducerTemplate.nodeIds.add("alice");
-        SecretPadResponse<EntityChangeListener.DbChangeEvent<BaseAggregationRoot>> success = SecretPadResponse.success();
-        SecretPadResponse<EntityChangeListener.DbChangeEvent<BaseAggregationRoot>> error = new SecretPadResponse<>();
-        error.setStatus(SecretPadResponse.SecretPadResponseStatus.builder().code(500).build());
-        Mockito.when(p2pDataSyncRestService.sync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(success);
 
         DataSyncRestTemplate dataSyncRestTemplate = new P2pDataSyncRestTemplate();
         P2PDataSyncDataBufferTemplate dataSyncDataBufferTemplate = new P2PDataSyncDataBufferTemplate(applicationEventPublisher);
@@ -209,9 +199,7 @@ public class DataSyncJobTest {
          * case "ProjectInstDO"
          */
         dataSyncDataBufferTemplate.push(buildProjectDO());
-        Mockito.when(p2pDataSyncRestService.sync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(error);
         dataSyncDataBufferTemplate.push(buildProjectGraphDO());
-        Mockito.when(p2pDataSyncRestService.sync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(success);
         dataSyncDataBufferTemplate.push(buildProjectGraphNodeDO());
         dataSyncDataBufferTemplate.push(buildProjectInstDO());
         dataSyncDataBufferTemplate.push(buildProjectJobDO());
