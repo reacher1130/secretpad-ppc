@@ -35,6 +35,11 @@ public class PaddleDtxController {
         return SecretPadResponse.success(client.getTask(taskId));
     }
 
+    @PostMapping("/task/start")
+    public SecretPadResponse<Map<String, Object>> start(@RequestBody Map<String, String> request) {
+        return SecretPadResponse.success(client.startTask(request.get("taskId")));
+    }
+
     @PostMapping("/task/list")
     public SecretPadResponse<Map<String, Object>> list() {
         return SecretPadResponse.success(client.listTasks());

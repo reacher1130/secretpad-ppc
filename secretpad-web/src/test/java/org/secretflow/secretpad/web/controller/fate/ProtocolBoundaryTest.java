@@ -13,7 +13,9 @@ class ProtocolBoundaryTest {
         var properties = new ProtocolConfigurationProperties();
         properties.setCanSwitch(false);properties.setDefaultProtocol("bfia");
         var boundary = new ProtocolBoundaryConfiguration(new ProtocolConfigService(properties));
-        for (String path : new String[]{"/api/v1alpha1/fate/job/submit", "/api/v1alpha1/paddledtx/task/submit", "/api/v1alpha1/graph/start"}) {
+        for (String path : new String[]{"/api/v1alpha1/fate/job/submit", "/api/v1alpha1/paddledtx/task/submit",
+                "/api/v1alpha1/paddledtx/task/start", "/api/v1alpha1/paddledtx/task/list",
+                "/api/v1alpha1/paddledtx/task/get", "/api/v1alpha1/graph/start"}) {
             var response = new MockHttpServletResponse();
             assertFalse(boundary.preHandle(new MockHttpServletRequest("POST", path), response, new Object()));
             assertEquals(403, response.getStatus());
@@ -22,7 +24,9 @@ class ProtocolBoundaryTest {
     }
     @Test void aliceCanAccessEveryProtocolWithoutChangingPeerCapabilities() throws Exception {
         var boundary = new ProtocolBoundaryConfiguration(new ProtocolConfigService(new ProtocolConfigurationProperties()));
-        for (String path : new String[]{"/api/v1alpha1/fate/job/submit", "/api/v1alpha1/paddledtx/task/submit", "/api/v1alpha1/graph/start", "/api/v1bfia/flow/start"})
+        for (String path : new String[]{"/api/v1alpha1/fate/job/submit", "/api/v1alpha1/paddledtx/task/submit",
+                "/api/v1alpha1/paddledtx/task/start", "/api/v1alpha1/paddledtx/task/list",
+                "/api/v1alpha1/paddledtx/task/get", "/api/v1alpha1/graph/start", "/api/v1bfia/flow/start"})
             assertTrue(boundary.preHandle(new MockHttpServletRequest("POST", path), new MockHttpServletResponse(), new Object()));
     }
 }

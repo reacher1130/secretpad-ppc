@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -38,8 +39,12 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class PaddleDtxClient {
 
-    private static final Pattern TASK_ID = Pattern.compile(
-            "(?i)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})");
+    private static final String UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+    private static final Pattern TASK_ID = Pattern.compile(UUID_PATTERN, Pattern.CASE_INSENSITIVE);
+    private static final Pattern PUBLISHED_TASK_ID = Pattern.compile(
+            "(?im)^TaskID:\\h*(" + UUID_PATTERN + ")\\h*$");
+    private static final Set<String> TASK_STATES = Set.of("Publishing", "Confirming", "Ready", "ToProcess",
+            "Processing", "Finished", "Failed", "Rejected");
 
     private final ProtocolConfigurationProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -113,34 +118,113 @@ public class PaddleDtxClient {
         addOption(args, "--taskId", request.get("modelTaskId"));
 
         Map<String, Object> result = runCli(args, 120);
-        Object raw = result.get("output");
-        if (raw != null) {
-            Matcher matcher = TASK_ID.matcher(String.valueOf(raw));
-            if (matcher.find()) {
-                String taskId = matcher.group(1);
-                result.put("taskId", taskId);
-
-                // requester-cli keeps publish and start as two explicit
-                // lifecycle calls.  The web action is named "发布并执行", so
-                // complete the same signed start step here and return the
-                // chain task snapshot for the result panel.
-                Map<String, Object> start = startAfterConfirmation(taskId);
-                result.put("start", start);
-                result.put("task", waitForTerminalTask(taskId));
-            }
+        Matcher matcher = PUBLISHED_TASK_ID.matcher(String.valueOf(result.getOrDefault("output", "")));
+        if (!matcher.find()) {
+            throw new IllegalStateException("PaddleDTX publish did not return a task ID; check task history before retrying");
         }
+        String taskId = requireTaskId(matcher.group(1));
+        result.put("taskId", taskId);
+        // The chain persists the published task even when approval or the next request fails.
+        Map<String, Object> started = startTask(taskId);
+        result.put("task", started.get("task"));
+        if (started.containsKey("start")) result.put("start", started.get("start"));
+        if (started.containsKey("error")) result.put("error", started.get("error"));
         return result;
     }
 
     public Map<String, Object> getTask(String taskId) {
-        if (taskId == null || taskId.isBlank()) {
-            throw new IllegalArgumentException("taskId is required");
+        String id = requireTaskId(taskId);
+        Map<String, Object> result = runCli(List.of("task", "getbyid", "--id", id), 30);
+        List<Map<String, Object>> tasks = parseTasks(String.valueOf(result.getOrDefault("output", "")));
+        if (tasks.size() != 1 || !id.equals(tasks.get(0).get("taskId"))) {
+            throw new IllegalStateException("PaddleDTX query did not return the requested task");
         }
-        return runCli(List.of("task", "getbyid", "--id", taskId), 30);
+        result.put("taskId", id);
+        result.put("task", tasks.get(0));
+        return result;
     }
 
     public Map<String, Object> listTasks() {
-        return runCli(List.of("task", "list"), 30);
+        Map<String, Object> result = runCli(List.of("task", "list"), 30);
+        result.put("tasks", parseTasks(String.valueOf(result.getOrDefault("output", ""))));
+        return result;
+    }
+
+    public Map<String, Object> startTask(String taskId) {
+        String id = requireTaskId(taskId);
+        Map<String, Object> result;
+        try {
+            result = getTask(id);
+        } catch (IllegalStateException e) {
+            result = new LinkedHashMap<>();
+            result.put("taskId", id);
+            result.put("task", Map.of("taskId", id, "status", "Unknown"));
+            result.put("error", e.getMessage());
+            return result;
+        }
+        Map<?, ?> task = (Map<?, ?>) result.get("task");
+        if (!"Ready".equals(task.get("status"))) return result;
+        try {
+            Map<String, Object> start = runCli(List.of("task", "start", "--id", id), 30);
+            result.put("start", start);
+            Map<String, Object> latest = getTask(id);
+            latest.put("start", start);
+            return latest;
+        } catch (IllegalStateException e) {
+            // A concurrent start may already have advanced the same chain task.
+            try {
+                Map<String, Object> latest = getTask(id);
+                result.putAll(latest);
+                Object status = ((Map<?, ?>) latest.get("task")).get("status");
+                if (Set.of("ToProcess", "Processing", "Finished").contains(status)) return result;
+            } catch (IllegalStateException ignored) {
+                // Keep the last chain snapshot and task ID available for recovery.
+            }
+            result.put("error", e.getMessage());
+            return result;
+        }
+    }
+
+    private String requireTaskId(String taskId) {
+        if (taskId == null || !TASK_ID.matcher(taskId).matches()) {
+            throw new IllegalArgumentException("taskId must be a UUID");
+        }
+        return UUID.fromString(taskId).toString();
+    }
+
+    private List<Map<String, Object>> parseTasks(String output) {
+        List<Map<String, Object>> tasks = new ArrayList<>();
+        Map<String, Object> task = null;
+        for (String line : output.split("\\R")) {
+            int colon = line.indexOf(':');
+            if (colon < 0) continue;
+            String key = line.substring(0, colon).trim();
+            String value = line.substring(colon + 1).trim();
+            if ("TaskID".equals(key)) {
+                if (!TASK_ID.matcher(value).matches()) {
+                    throw new IllegalStateException("PaddleDTX query returned an invalid task ID");
+                }
+                task = new LinkedHashMap<>();
+                task.put("taskId", requireTaskId(value));
+                task.put("status", "Unknown");
+                tasks.add(task);
+            } else if (task != null) {
+                switch (key) {
+                    case "TaskName" -> task.put("name", value);
+                    case "TaskType" -> task.put("type", value);
+                    case "Status", "TaskStatus" -> task.put("status", TASK_STATES.contains(value) ? value : "Unknown");
+                    case "PublishTime" -> task.put("publishTime", value);
+                    case "Algorithm" -> task.put("algorithm", value);
+                    case "ModelTaskID" -> task.put("modelTaskId", value);
+                    case "StartTime" -> task.put("startTime", value);
+                    case "EndTime" -> task.put("endTime", value);
+                    case "ErrMessage" -> task.put("errorMessage", value);
+                    case "Result" -> task.put("result", value);
+                    default -> { }
+                }
+            }
+        }
+        return tasks;
     }
 
     Map<String, Object> runCli(List<String> commandArgs, long timeoutSeconds) {
@@ -225,55 +309,6 @@ public class PaddleDtxClient {
         }
         String compact = output.replaceAll("\\s+", " ").trim();
         return compact.length() > 500 ? compact.substring(0, 500) : compact;
-    }
-
-    /**
-     * XChain confirmation is asynchronous.  A publish can therefore return
-     * before the task leaves Confirming, while requester-cli's start command
-     * is only valid for Ready/Failed tasks.  Retry only that expected
-     * transition; all other errors remain hard failures for the web request.
-     */
-    private Map<String, Object> startAfterConfirmation(String taskId) {
-        for (int attempt = 0; attempt < 30; attempt++) {
-            try {
-                return runCli(List.of("task", "start", "--id", taskId), 120);
-            } catch (IllegalStateException e) {
-                String message = e.getMessage();
-                boolean confirming = message != null
-                        && (message.contains("task status is Confirming")
-                        || message.contains("task status is Publishing")
-                        || message.contains("not Ready or Failed"));
-                if (!confirming || attempt == 29) {
-                    throw e;
-                }
-                try {
-                    Thread.sleep(1000L);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("PaddleDTX start retry interrupted", interrupted);
-                }
-            }
-        }
-        throw new IllegalStateException("PaddleDTX task did not become startable");
-    }
-
-    /** Wait briefly for both DAI executors to finish the MPC task. */
-    private Map<String, Object> waitForTerminalTask(String taskId) {
-        Map<String, Object> latest = getTask(taskId);
-        for (int attempt = 0; attempt < 30; attempt++) {
-            String output = String.valueOf(latest.getOrDefault("output", ""));
-            if (output.contains("Status: Finished") || output.contains("Status: Failed")) {
-                return latest;
-            }
-            try {
-                Thread.sleep(1000L);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("PaddleDTX task polling interrupted", interrupted);
-            }
-            latest = getTask(taskId);
-        }
-        return latest;
     }
 
     private boolean containsCliFailure(String output) {
