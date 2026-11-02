@@ -50,11 +50,10 @@ import java.util.Set;
  */
 @Slf4j
 @TestPropertySource(properties = {
-        "secretpad.gateway=localhost:9001",
-        "server.port=8443"
+        "secretpad.gateway=localhost:9001"
 })
 @ActiveProfiles({SystemConstants.TEST})
-@SpringBootTest(classes = SecretPadApplication.class, webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT)
+@SpringBootTest(classes = SecretPadApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public class CenterDataSyncControllerTest {
     @Resource
     private EdgeDataSyncServiceImpl edgeDataSyncService;

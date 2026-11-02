@@ -54,7 +54,7 @@ public class LoginInterceptorTest extends ControllerTest {
         MockHttpServletRequestBuilder requestBuilder = post("/api/v1alpha1/approval/create").contentType("application/json");
         mockMvc.perform(requestBuilder)
                 .andExpect(status().isOk())
-                .andExpect(content().json("{\"status\":{\"code\":202011602,\"msg\":\"用户认证失败: The request header does not contain header!\"},\"data\":null}"));
+                .andExpect(content().json("{\"status\":{\"code\":202011602,\"msg\":\"用户认证失败: The request header does not contain User-Token!\"},\"data\":null}"));
     }
 
     @Test

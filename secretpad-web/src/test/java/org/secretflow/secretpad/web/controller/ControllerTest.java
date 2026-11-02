@@ -30,6 +30,7 @@ import org.secretflow.secretpad.service.model.common.SecretPadResponse;
 import org.secretflow.secretpad.service.util.DbSyncUtil;
 import org.secretflow.secretpad.service.util.RateLimitUtil;
 import org.secretflow.secretpad.web.SecretPadApplication;
+import org.secretflow.secretpad.web.interceptor.LoginInterceptor;
 
 import jakarta.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
@@ -42,9 +43,11 @@ import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.MediaType;
 import org.springframework.lang.Nullable;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -86,6 +89,10 @@ public class ControllerTest {
     protected MockMvc mockMvc;
     @MockBean
     protected DataProxyService dataProxyService;
+    @SpyBean
+    private LoginInterceptor loginInterceptor;
+    @Value("${secretpad.auth.enabled:true}")
+    private boolean authEnabled;
     @Resource
     private InstRepository instRepository;
 
@@ -100,6 +107,10 @@ public class ControllerTest {
 
     @BeforeEach
     public void initSession() {
+        // Business tests supply their own user; authentication tests retain the real interceptor.
+        if (!authEnabled) {
+            Mockito.doReturn(true).when(loginInterceptor).preHandle(Mockito.any(), Mockito.any(), Mockito.any());
+        }
         UserContext.setBaseUser(UserContextDTO.builder().ownerId("alice")
                 .name("alice")
                 .platformType(PlatformTypeEnum.CENTER)
