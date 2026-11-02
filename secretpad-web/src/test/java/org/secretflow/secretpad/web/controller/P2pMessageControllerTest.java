@@ -17,6 +17,7 @@
 package org.secretflow.secretpad.web.controller;
 
 import org.secretflow.secretpad.common.util.JsonUtils;
+import org.secretflow.secretpad.common.util.UserContext;
 import org.secretflow.secretpad.manager.integration.noderoute.NodeRouteManager;
 import org.secretflow.secretpad.persistence.entity.NodeDO;
 import org.secretflow.secretpad.persistence.entity.VoteInviteDO;
@@ -28,6 +29,7 @@ import org.secretflow.secretpad.service.model.message.VoteReplyRequest;
 import org.secretflow.secretpad.web.utils.FakerUtils;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.mockito.Mockito;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
@@ -63,6 +65,23 @@ public class P2pMessageControllerTest extends ControllerTest {
 
     @MockBean
     private NodeRouteManager nodeRouteManager;
+
+    @BeforeEach
+    void setVoter() {
+        UserContext.getUser().setOwnerId("nodeId");
+    }
+
+    @Test
+    void rejectsAnotherInstitutionsVote() throws Exception {
+        assertErrorCode(() -> {
+            VoteReplyRequest request = new VoteReplyRequest();
+            request.setAction("APPROVED");
+            request.setVoteId("5470dd07cf4c4281906941fc74dd0440");
+            request.setVoteParticipantId("another-institution");
+            return MockMvcRequestBuilders.post(getMappingUrl(MessageController.class, "reply", VoteReplyRequest.class))
+                    .content(JsonUtils.toJSONString(request));
+        }, VOTE_CHECK_FAILED);
+    }
 
     @Test
     public void replyVoteNotExists() throws Exception {
