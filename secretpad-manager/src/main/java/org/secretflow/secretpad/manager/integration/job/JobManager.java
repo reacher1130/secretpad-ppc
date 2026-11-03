@@ -46,6 +46,7 @@ import com.google.protobuf.util.JsonFormat;
 import com.secretflow.spec.v1.DistData;
 import com.secretflow.spec.v1.IndividualTable;
 import com.secretflow.spec.v1.TableSchema;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import jakarta.annotation.Resource;
 import lombok.Setter;
@@ -53,6 +54,7 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 import org.secretflow.v1alpha1.common.Common;
+import org.secretflow.v1alpha1.kusciaapi.Domaindata;
 import org.secretflow.v1alpha1.kusciaapi.Job;
 import org.secretflow.v1alpha1.kusciaapi.JobServiceGrpc;
 import org.slf4j.Logger;
@@ -106,6 +108,9 @@ public class JobManager extends AbstractJobManager {
     @Setter
     @Value("${secretpad.node-id}")
     private String nodeId;
+    // The watcher nodeId can change when a Kuscia connection is registered.
+    @Value("${secretpad.node-id}")
+    private String localNodeId;
     @Resource
     private CacheManager cacheManager;
     @Resource
@@ -377,15 +382,14 @@ public class JobManager extends AbstractJobManager {
                     nodeDatatableIds.get(0).setNodeId(this.nodeId);
                 }
             }
-            Map<DatatableDTO.NodeDatatableId, DatatableDTO> datatableDTOMap = datatableManager.findByIds(nodeDatatableIds, (currentNodeId, extra) -> {
-                List<String> clone = new ArrayList<>(parties);
-                clone.retainAll(P2pDataSyncProducerTemplate.nodeIds);
-                if (!clone.isEmpty()) {
-                    return clone.get(0);
-                } else {
-                    return this.nodeId;
-                }
-            });
+            String target = parties.stream().filter(P2pDataSyncProducerTemplate.nodeIds::contains)
+                    .findFirst().orElse(this.nodeId);
+            Map<DatatableDTO.NodeDatatableId, DatatableDTO> datatableDTOMap =
+                    new HashMap<>(datatableManager.findByIds(nodeDatatableIds, (currentNodeId, extra) -> target));
+            if (PlatformTypeEnum.AUTONOMY.equals(getPlaformType()) && parties.size() > 1
+                    && parties.contains(localNodeId) && !Objects.equals(localNodeId, target)) {
+                addMissingLocalFedTables(nodeDatatableIds, datatableDTOMap);
+            }
             LOGGER.info("looked up nodeDatatableIds from kusciaapi, datatableDTOMap size: {}", datatableDTOMap.size());
             datatableDTOMap.forEach((key, val) -> {
                 LOGGER.info("nodeDatatableIds: {} {}", key, val);
@@ -515,6 +519,31 @@ public class JobManager extends AbstractJobManager {
                         throw SecretpadException.of(DatatableErrorCode.UNSUPPORTED_DATATABLE_TYPE);
                 }
             });
+        }
+    }
+
+    private void addMissingLocalFedTables(List<DatatableDTO.NodeDatatableId> requestedIds,
+                                          Map<DatatableDTO.NodeDatatableId, DatatableDTO> results) {
+        List<DatatableDTO.NodeDatatableId> missingLocalIds = requestedIds.stream()
+                .filter(id -> localNodeId.equals(id.getNodeId()) && !results.containsKey(id))
+                .distinct().toList();
+        if (missingLocalIds.isEmpty()) {
+            return;
+        }
+        try {
+            List<Domaindata.DomainData> local = datatableManager.findByIdsBase(
+                    missingLocalIds, (currentNodeId, extra) -> localNodeId);
+            for (Domaindata.DomainData data : local) {
+                DatatableDTO.NodeDatatableId id =
+                        DatatableDTO.NodeDatatableId.from(data.getDomainId(), data.getDomaindataId());
+                // FedTable has per-owner metadata. Report content is shared by output ID.
+                if (missingLocalIds.contains(id) && localNodeId.equals(data.getAuthor())
+                        && ResultKind.FedTable.getName().equalsIgnoreCase(data.getType())) {
+                    results.putIfAbsent(id, DatatableDTO.fromDomainData(data));
+                }
+            }
+        } catch (SecretpadException | StatusRuntimeException e) {
+            LOGGER.warn("Could not look up missing FedTables from local Kuscia {}", localNodeId, e);
         }
     }
 
