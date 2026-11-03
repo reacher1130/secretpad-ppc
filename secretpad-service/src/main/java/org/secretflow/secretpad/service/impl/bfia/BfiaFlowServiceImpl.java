@@ -59,7 +59,6 @@ import org.springframework.util.CollectionUtils;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -646,36 +645,10 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
         }
         String namespace = outputUri.substring(0, slash);
         String name = outputUri.substring(slash + 1);
-        String content = bfiaOutputStorage.readText(namespace, name);
-        if (content.isBlank()) {
-            throw new IllegalStateException("BFIA output file is empty or unreadable: " + outputUri);
-        }
-
-        GraphNodeOutputVO outputVO = GraphNodeOutputVO.builder().build();
-        outputVO.setType("table");
-        outputVO.setJobId(latest.getJobId());
-        outputVO.setGraphID(graphId);
-        outputVO.setCodeName(graphDO.getNodes().stream()
+        String codeName = graphDO.getNodes().stream()
                 .filter(n -> graphNodeId.equals(n.getUpk().getGraphNodeId()))
-                .findFirst().map(BfiaGraphNodeDO::getNodeDefId).orElse(null));
-
-        List<Map<String, Object>> rows = parseCsvRows(content);
-        List<Map<String, String>> headers = new ArrayList<>();
-        if (!rows.isEmpty()) {
-            for (String key : rows.get(0).keySet()) {
-                Map<String, String> h = new LinkedHashMap<>();
-                h.put("name", key);
-                h.put("type", "AT_STRING");
-                headers.add(h);
-            }
-        }
-        GraphNodeOutputVO.FileMeta meta = GraphNodeOutputVO.FileMeta.builder()
-                .format("csv-records")
-                .headers(headers)
-                .rows(rows)
-                .build();
-        outputVO.setMeta(meta);
-        return outputVO;
+                .findFirst().map(BfiaGraphNodeDO::getNodeDefId).orElse(null);
+        return bfiaOutputStorage.readTable(namespace, name, latest.getJobId(), graphId, codeName);
     }
 
     @Override
@@ -894,27 +867,4 @@ public class BfiaFlowServiceImpl implements BfiaFlowService {
         return "SUCCESS".equals(upper) || "FAILED".equals(upper);
     }
 
-    /**
-     * Parse a simple CSV (comma-separated, first line header) into a list of row maps.
-     */
-    private List<Map<String, Object>> parseCsvRows(String content) {
-        List<Map<String, Object>> rows = new ArrayList<>();
-        String[] lines = content.split("\r?\n");
-        if (lines.length < 2) {
-            return rows;
-        }
-        String[] headers = lines[0].split(",");
-        for (int i = 1; i < lines.length; i++) {
-            if (lines[i].isBlank()) {
-                continue;
-            }
-            String[] values = lines[i].split(",");
-            Map<String, Object> row = new LinkedHashMap<>();
-            for (int j = 0; j < headers.length; j++) {
-                row.put(headers[j].trim(), j < values.length ? values[j].trim() : "");
-            }
-            rows.add(row);
-        }
-        return rows;
-    }
 }

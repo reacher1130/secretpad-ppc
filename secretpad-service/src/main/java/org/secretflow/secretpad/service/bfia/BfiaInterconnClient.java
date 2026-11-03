@@ -98,6 +98,10 @@ public class BfiaInterconnClient {
         return crossNodeEnabled;
     }
 
+    public String configuredPadAddress(String peerId) {
+        return resolvePadHttpBase(peerId);
+    }
+
     /**
      * POST a JSON body to a peer node's interconn endpoint, best-effort.
      *

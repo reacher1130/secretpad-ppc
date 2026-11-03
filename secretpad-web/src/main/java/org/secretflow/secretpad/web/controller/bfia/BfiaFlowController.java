@@ -60,6 +60,7 @@ public class BfiaFlowController {
     private final BfiaGraphService bfiaGraphService;
     private final ProjectService projectService;
     private final org.secretflow.secretpad.service.bfia.BfiaFlowLifecycleService lifecycle;
+    private final BfiaPeerPsiResult peerPsiResult;
     @org.springframework.beans.factory.annotation.Value("${secretpad.node-id}")
     private String localNodeId;
 
@@ -111,12 +112,16 @@ public class BfiaFlowController {
 
     @PostMapping("/node/status")
     public SecretPadResponse<GraphStatus> listGraphNodeStatus(@RequestBody Map<String, Object> body) {
-        return SecretPadResponse.success(bfiaFlowService.listGraphNodeStatus(toRequest(body, ListGraphNodeStatusRequest.class)));
+        var request = toRequest(body, ListGraphNodeStatusRequest.class);
+        GraphStatus peerStatus = peerPsiResult.status(request.getProjectId(), request.getGraphId());
+        return SecretPadResponse.success(peerStatus != null ? peerStatus : bfiaFlowService.listGraphNodeStatus(request));
     }
 
     @PostMapping("/node/output")
     public SecretPadResponse<GraphNodeOutputVO> getGraphNodeOutput(@RequestBody Map<String, Object> body) {
-        return SecretPadResponse.success(bfiaFlowService.getGraphNodeOutput(toRequest(body, GraphNodeOutputRequest.class)));
+        var request = toRequest(body, GraphNodeOutputRequest.class);
+        GraphNodeOutputVO peerOutput = peerPsiResult.output(request);
+        return SecretPadResponse.success(peerOutput != null ? peerOutput : bfiaFlowService.getGraphNodeOutput(request));
     }
 
     @PostMapping("/node/max_index")

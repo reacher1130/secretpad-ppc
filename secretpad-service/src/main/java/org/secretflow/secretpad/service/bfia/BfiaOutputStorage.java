@@ -18,6 +18,7 @@ package org.secretflow.secretpad.service.bfia;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.secretflow.secretpad.service.model.graph.GraphNodeOutputVO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -26,6 +27,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -72,6 +77,29 @@ public class BfiaOutputStorage {
     public String readText(String namespace, String name) {
         byte[] bytes = readBytes(namespace, name);
         return bytes == null || bytes.length == 0 ? "" : new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    public GraphNodeOutputVO readTable(String namespace, String name, String jobId, String graphId, String codeName) {
+        String content = readText(namespace, name);
+        if (content.isBlank()) {
+            throw new IllegalStateException("BFIA output file is empty or unreadable");
+        }
+        String[] lines = content.split("\r?\n");
+        String[] columns = lines[0].split(",");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 1; i < lines.length; i++) {
+            if (lines[i].isBlank()) continue;
+            String[] values = lines[i].split(",");
+            Map<String, Object> row = new LinkedHashMap<>();
+            for (int j = 0; j < columns.length; j++) {
+                row.put(columns[j].trim(), j < values.length ? values[j].trim() : "");
+            }
+            rows.add(row);
+        }
+        List<Map<String, String>> headers = rows.isEmpty() ? List.of() : rows.get(0).keySet().stream()
+                .map(key -> Map.of("name", key, "type", "AT_STRING")).toList();
+        return GraphNodeOutputVO.builder().type("table").jobId(jobId).graphID(graphId).codeName(codeName)
+                .meta(GraphNodeOutputVO.FileMeta.builder().format("csv-records").headers(headers).rows(rows).build()).build();
     }
 
     /**
